@@ -9,6 +9,17 @@ import (
 	"howett.net/plist"
 )
 
+type ServerInfo struct {
+	ACL            int64  `plist:"acl"`
+	DeviceID       string `plist:"deviceid"`
+	Features       int64  `plist:"features"`
+	MacAddress     string `plist:"macAddress"`
+	Model          string `plist:"model"`
+	OSBuildVersion string `plist:"osBuildVersion"`
+	Protovers      string `plist:"protovers"`
+	Srcvers        string `plist:"srcvers"`
+}
+
 func getXML(url string) ([]byte, error) {
 	// Make a GET request to the specified URL
 	resp, err := http.Get(url)
@@ -34,23 +45,13 @@ func main() {
 		fmt.Printf("Error getting XML: %v", err)
 		return
 	}
-	var plistData map[string]interface{}
-	format, err := plist.Unmarshal(res, &plistData)
+	var serverInfo ServerInfo
+	format, err := plist.Unmarshal(res, &serverInfo)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(format)
-	int := int64(plistData["features"].(int64))
-	binaryString := strconv.FormatInt(int64(int), 2)
-	fmt.Println(binaryString)
-
-	// Access the data in the Plist struct.
-	//fmt.Println("acl:", p.Dict.Acl)
-	//fmt.Println("deviceid:", p.Dict.Deviceid)
-	//fmt.Println("features:", p.Dict.Features)
-	//fmt.Println("macAddress:", p.Dict.MacAddress)
-	//fmt.Println("model:", p.Dict.Model)
-	//fmt.Println("osBuildVersion:", p.Dict.OsBuildVersion)
-	//fmt.Println("protovers:", p.Dict.Protovers)
-	//fmt.Println("srcvers:", p.Dict.Srcvers)
+	fmt.Println(serverInfo.Features)
+	featuresBinStr := strconv.FormatInt(int64(serverInfo.Features), 2)
+	fmt.Println(featuresBinStr)
 }
