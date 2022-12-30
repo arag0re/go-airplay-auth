@@ -1,25 +1,88 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
+	"time"
 
-	"github.com/brutella/hc/db"
 	"github.com/brutella/hc/hap"
-	"github.com/brutella/hc/hap/pair"
 	"github.com/brutella/hc/log"
+	_ "github.com/opencoff/go-srp"
 	"howett.net/plist"
 )
+
+var socketTimeout = 60 * 1000
+var ClientID = ""
+
+const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type PairSetupPin1Response struct {
 	Pk   []byte
 	Salt []byte
 }
 
-func CreatePList(data map[string]string) ([]byte, error) {
+type PairSetupPin2Response struct {
+	Pk    []byte
+	Proof []byte
+}
+
+func randomString(length int) string {
+	b := make([]byte, length)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(err)
+	}
+	s := make([]byte, length)
+	for i, v := range b {
+		s[i] = charset[v%byte(len(charset))]
+	}
+	return string(s)
+}
+
+func postData(socket net.Conn, path string, contentType string, data []byte) ([]byte, error) {
+	req, err := http.NewRequest("POST", path, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if err := req.Write(socket); err != nil {
+		return nil, err
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(socket), req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return body, nil
+}
+
+func createPListStep1(data map[string]string) ([]byte, error) {
+	var b bytes.Buffer
+	enc := plist.NewEncoder(&b)
+	err := enc.Encode(data)
+	if err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+func createPListStep2(data map[string][]byte) ([]byte, error) {
 	var b bytes.Buffer
 	enc := plist.NewEncoder(&b)
 	err := enc.Encode(data)
@@ -38,14 +101,56 @@ func Parse(data []byte) (map[string]interface{}, error) {
 	return plistData, nil
 }
 
+func generateNewAuthToken() string {
+	clientID := randomString(16)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	privateKeyDER := x509.MarshalPKCS1PrivateKey(privateKey)
+	privateKeyHex := hex.EncodeToString(privateKeyDER)
+
+	return clientID + "@" + privateKeyHex
+}
+
+func connect(addr string) (net.Conn, error) {
+	socket, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := socket.SetDeadline(time.Now().Add(time.Duration(socketTimeout))); err != nil {
+		return nil, err
+	}
+
+	if err := socket.SetReadDeadline(time.Now().Add(time.Duration(socketTimeout))); err != nil {
+		return nil, err
+	}
+
+	if err := socket.SetWriteDeadline(time.Now().Add(time.Duration(socketTimeout))); err != nil {
+		return nil, err
+	}
+
+	return socket, nil
+}
+
 func pairPinStart(b io.Reader) (io.Reader, error) {
 	return Post(b, "pair-pin-start", hap.HTTPContentTypePairingTLV8, nil)
 }
+func pairPinStartAlt(addr string) {
+	socket, err := connect(addr)
+	if err != nil {
+		panic(err)
+	}
+	postData(socket, "/pair-pin-start", "", nil)
+	socket.Close()
+}
 
-func pairSetupPin1() (*PairSetupPin1Response, error) {
-	pairSetupPinRequestData, err := CreatePList(map[string]string{
+func doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, error) {
+	pairSetupPinRequestData, err := createPListStep1(map[string]string{
 		"method": "pin",
-		"user":   "testing123",
+		"user":   ClientID,
 	})
 	if err != nil {
 		return nil, err
@@ -72,18 +177,63 @@ func pairSetupPin1() (*PairSetupPin1Response, error) {
 	return nil, fmt.Errorf("missing 'pk' and/or 'salt' keys in response")
 }
 
+func doPairSetupPin2(socket net.Conn, publicClientValueA []byte, clientEvidenceMessageM1 []byte) (PairSetupPin2Response, error) {
+	pairSetupPinRequestData, err := createPListStep2(map[string][]byte{
+		"pk":    publicClientValueA,
+		"proof": clientEvidenceMessageM1,
+	})
+	if err != nil {
+		return PairSetupPin2Response{}, err
+	}
+	pairSetupPin2ResponseBytes, err := postData(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
+	if err != nil {
+		return PairSetupPin2Response{}, err
+	}
+
+	pairSetupPin2Response, err := Parse(pairSetupPin2ResponseBytes)
+	if err != nil {
+		return PairSetupPin2Response{}, err
+	}
+
+	if _, ok := pairSetupPin2Response["proof"]; !ok {
+		return PairSetupPin2Response{}, fmt.Errorf("missing proof key in response")
+	}
+
+	proof, ok := pairSetupPin2Response["proof"].([]byte)
+	if !ok {
+		return PairSetupPin2Response{}, fmt.Errorf("proof key in response is not of type []byte")
+	}
+
+	return PairSetupPin2Response{Proof: proof}, nil
+}
+
+func doPairing() {
+	socket, err := connect("192.168.1.35:7000")
+	if err != nil {
+		log.Info.Panic(err)
+	}
+	pairPinStartAlt("192.168.1.35:7000")
+	_ = generateNewAuthToken()
+	PairSetupPin1Response, err := doPairSetupPin1(socket)
+	if err != nil {
+		log.Info.Panic(err)
+	}
+	fmt.Println(string(PairSetupPin1Response.Pk))
+	fmt.Println(string(PairSetupPin1Response.Salt))
+}
+
 func Post(b io.Reader, endpoint string, contentType string, data []byte) (io.Reader, error) {
-	url := fmt.Sprintf("http://192.168.1.55:7000/%s", endpoint)
+	url := fmt.Sprintf("http://192.168.1.35:7000/%s", endpoint)
 	if b != nil {
 		resp, err := http.Post(url, contentType, b)
-		fmt.Print(resp.Body, resp.Header)
+		//fmt.Print(resp.Body, resp.Header)
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("Invalid status code %v", resp.StatusCode)
 		}
 		return resp.Body, err
 	} else {
 		resp, err := http.Post(url, contentType, bytes.NewReader(data))
-		fmt.Print(resp.Body, resp.Header)
+		//fmt.Print(resp.Body, resp.Header)
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("Invalid status code %v", resp.StatusCode)
 		}
@@ -92,101 +242,6 @@ func Post(b io.Reader, endpoint string, contentType string, data []byte) (io.Rea
 }
 
 func main() {
-	database, _ := db.NewDatabase("./data")
-	c, _ := hap.NewDevice("Golang Mirroring", database)
-	client := pair.NewSetupClientController("336-02-620", c, database)
-	pairPinStartRequest := client.InitialPairingRequest()
-	_, err := pairPinStart(pairPinStartRequest)
-	if err != nil {
-		log.Info.Panic(err)
-	}
-	PairSetupPin1Response, err := pairSetupPin1()
-	if err != nil {
-		log.Info.Panic(err)
-	}
-	print(PairSetupPin1Response.Pk)
-	//startPairing()
+	pairPinStartAlt("192.168.1.35:7000")
+	doPairing()
 }
-
-//	func main() {
-//		database, _ := db.NewDatabase("./data")
-//		c, _ := hap.NewDevice("Golang Mirroring", database)
-//		client := pair.NewSetupClientController("1234", c, database)
-//		pairStartRequest := client.InitialPairingRequest()
-//		pairStartResponse, err := pairPinStart(pairStartRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//		var input string
-//		fmt.Print("Enter a the pin shown on your Target Device: ")
-//		fmt.Scanf("%s\n", &input)
-//		fmt.Println("You entered:", input)
-//		// 2) S -> C
-//		pairVerifyRequest, err := pair.HandleReaderForHandler(pairStartResponse, client)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 3) C -> S
-//		pairVerifyResponse, err := pairPinStart(pairVerifyRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 4) S -> C
-//		pairKeyRequest, err := pair.HandleReaderForHandler(pairVerifyResponse, client)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 5) C -> S
-//		pairKeyRespond, err := pairPinStart(pairKeyRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 6) S -> C
-//		request, err := pair.HandleReaderForHandler(pairKeyRespond, client)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		if request != nil {
-//			log.Info.Println(request)
-//		}
-//
-//		log.Info.Println("*** Pairing done ***")
-//
-//		verify := pair.NewVerifyClientController(c, database)
-//
-//		verifyStartRequest := verify.InitialKeyVerifyRequest()
-//		// 1) C -> S
-//		verifyStartResponse, err := pairSetupPin(verifyStartRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 2) S -> C
-//		verifyFinishRequest, err := pair.HandleReaderForHandler(verifyStartResponse, verify)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 3) C -> S
-//		verifyFinishResponse, err := pairSetupPin(verifyFinishRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 4) S -> C
-//		last_request, err := pair.HandleReaderForHandler(verifyFinishResponse, verify)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		if last_request != nil {
-//			log.Info.Println(last_request)
-//		}
-//
-//		log.Info.Println("*** Key Verification done ***")
-//	}
