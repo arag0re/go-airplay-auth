@@ -175,88 +175,9 @@ func sendTLV8(b io.Reader, endpoint string) (io.Reader, error) {
 	return resp.Body, err
 }
 
-//	func main() {
-//		database, _ := db.NewDatabase("./data")
-//		c, _ := hap.NewDevice("Golang Mirroring", database)
-//		client := pair.NewSetupClientController("1234", c, database)
-//		pairStartRequest := client.InitialPairingRequest()
-//		pairStartResponse, err := pairPinStart(pairStartRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//		var input string
-//		fmt.Print("Enter a the pin shown on your Target Device: ")
-//		fmt.Scanf("%s\n", &input)
-//		fmt.Println("You entered:", input)
-//		// 2) S -> C
-//		pairVerifyRequest, err := pair.HandleReaderForHandler(pairStartResponse, client)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 3) C -> S
-//		pairVerifyResponse, err := pairPinStart(pairVerifyRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 4) S -> C
-//		pairKeyRequest, err := pair.HandleReaderForHandler(pairVerifyResponse, client)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 5) C -> S
-//		pairKeyRespond, err := pairPinStart(pairKeyRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 6) S -> C
-//		request, err := pair.HandleReaderForHandler(pairKeyRespond, client)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		if request != nil {
-//			log.Info.Println(request)
-//		}
-//
-//		log.Info.Println("*** Pairing done ***")
-//
-//		verify := pair.NewVerifyClientController(c, database)
-//
-//		verifyStartRequest := verify.InitialKeyVerifyRequest()
-//		// 1) C -> S
-//		verifyStartResponse, err := pairSetupPin(verifyStartRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 2) S -> C
-//		verifyFinishRequest, err := pair.HandleReaderForHandler(verifyStartResponse, verify)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 3) C -> S
-//		verifyFinishResponse, err := pairSetupPin(verifyFinishRequest)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		// 4) S -> C
-//		last_request, err := pair.HandleReaderForHandler(verifyFinishResponse, verify)
-//		if err != nil {
-//			log.Info.Panic(err)
-//		}
-//
-//		if last_request != nil {
-//			log.Info.Println(last_request)
-//		}
-//
-//		log.Info.Println("*** Key Verification done ***")
-//	}
 func main() {
-	
+	ip := net.ParseIP("192.168.1.35")
+	serv := getServerInfo(ip, 7000)
+	fmt.Println(serv)
+	checkForFeatures(ip, 7000)
 }
