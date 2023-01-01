@@ -1,1 +1,1 @@
-# AirPlay 2 Mirring Client written GO
+# AirPlay 2 Mirroring Client written GO
