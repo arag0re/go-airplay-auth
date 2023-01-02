@@ -206,23 +206,12 @@ func openTCPConnection(address string) (net.Conn, error) {
 }
 
 func getInfo(socket net.Conn) (info map[string]interface{}, err error) {
-	postErr := postData(socket, "/info", "application/x-apple-binary-plist", "0", nil)
-	if postErr != nil {
-		log.Info.Panic(err)
-		return map[string]interface{}{}, err
-	}
-	resp, err := readResponse(socket)
+	post, err := post(socket, "/info", "application/x-apple-binary-plist", "0", nil)
 	if err != nil {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Info.Panic(err)
-		return map[string]interface{}{}, err
-	}
-	parsed, err := Parse(body)
+	parsed, err := Parse(post)
 	if err != nil {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err
@@ -231,7 +220,7 @@ func getInfo(socket net.Conn) (info map[string]interface{}, err error) {
 }
 
 func main() {
-	socket, err := openTCPConnection("192.168.1.35:7000")
+	socket, err := openTCPConnection("192.168.1.55:7000")
 	if err != nil {
 		log.Info.Panic(err)
 	}
