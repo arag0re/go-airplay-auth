@@ -3,6 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdsa"
+	_ "crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	_ "crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -53,22 +60,49 @@ func randomString(length int) string {
 	return string(s)
 }
 
-func postData(conn net.Conn, path string, contentType string, data []byte) error {
+func post(socket net.Conn, path string, contentType string, CSeq string, data []byte) ([]byte, error) {
+	postErr := postData(socket, path, contentType, CSeq, data)
+	if postErr != nil {
+		return nil, postErr
+	}
+	resp, err := readResponse(socket)
+	if err != nil {
+		log.Info.Panic(err)
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		panic(fmt.Errorf("got status %v", resp.StatusCode))
+	} else {
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Info.Panic(err)
+			return nil, err
+		}
+		return body, nil
+	}
+}
+
+func postData(socket net.Conn, path string, contentType string, CSeq string, data []byte) error {
 	var req strings.Builder
 	req.WriteString(fmt.Sprintf("POST %s HTTP/1.1\r\n", path))
 	req.WriteString("User-Agent: AirPlay/415.3\r\n")
+	req.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(data)))
 	if contentType != "" {
 		req.WriteString(fmt.Sprintf("Content-Type: %s\r\n", contentType))
 	}
-	req.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(data)))
+	if CSeq != "" {
+		req.WriteString(fmt.Sprintf("CSeq: %v\r\n", CSeq))
+	}
 	req.WriteString("\r\n")
 	req.Write(data)
-	_, err := io.WriteString(conn, req.String())
+	_, err := io.WriteString(socket, req.String())
 	return err
 }
 
 func readResponse(conn net.Conn) (*http.Response, error) {
 	reader := bufio.NewReader(conn)
+	statusCode := 0
 	statusLine, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, err
@@ -81,6 +115,14 @@ func readResponse(conn net.Conn) (*http.Response, error) {
 		}
 		if line == "\r\n" {
 			break
+		}
+		statusParts := strings.SplitN(statusLine, " ", 3)
+		if len(statusParts) != 3 {
+			return nil, fmt.Errorf("invalid status line: %s", statusLine)
+		}
+		statusCode, err = strconv.Atoi(statusParts[1])
+		if err != nil {
+			return nil, err
 		}
 		parts := strings.SplitN(line, ": ", 2)
 		if len(parts) != 2 {
@@ -106,10 +148,9 @@ func readResponse(conn net.Conn) (*http.Response, error) {
 			return nil, err
 		}
 	}
-
 	resp := &http.Response{
 		Status:        strings.TrimSpace(statusLine),
-		StatusCode:    http.StatusOK, // default to OK
+		StatusCode:    statusCode, // default to OK
 		Header:        headers,
 		Body:          ioutil.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
@@ -157,34 +198,94 @@ func generateNewAuthToken() string {
 	return clientID + "@" + privateKeyHex
 }
 
+func GenerateKey() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+func ECDHSharedKey(privKey *ecdsa.PrivateKey, pubKey *ecdsa.PublicKey) ([]byte, error) {
+	x, y := pubKey.Curve.ScalarMult(pubKey.X, pubKey.Y, privKey.D.Bytes())
+	if x == nil {
+		return nil, fmt.Errorf("invalid public key")
+	}
+	xBytes := x.Bytes()
+	yBytes := y.Bytes()
+	sharedKey := make([]byte, len(xBytes)+len(yBytes))
+	copy(sharedKey[:len(xBytes)], xBytes)
+	copy(sharedKey[len(xBytes):], yBytes)
+	return sharedKey, nil
+}
+
+func Encrypt(key, data []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext := make([]byte, aes.BlockSize+len(data))
+	iv := ciphertext[:aes.BlockSize]
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, err
+	}
+	stream := cipher.NewCTR(block, iv)
+	stream.XORKeyStream(ciphertext[aes.BlockSize:], data)
+	return ciphertext, nil
+}
+
 func pairPinStart(addr string) {
 	socket, err := openTCPConnection(addr)
 	if err != nil {
 		panic(err)
 	}
-	postData(socket, "/pair-pin-start", "", nil)
+	postData(socket, "/pair-pin-start", "", "0", nil)
 	socket.Close()
 }
 
-func doPairSetup(socket net.Conn) []byte {
-	arr := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
-	postErr := postData(socket, "/pair-setup", "application/octet-stream", arr)
-	if postErr != nil {
-		return nil
+func doPairSetup(socket net.Conn) ([]byte, error) {
+	featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9)), int64(math.Pow(2, 19)), int64(math.Pow(2, 20)), int64(math.Pow(2, 48))}
+	check := checkForFeatures(socket, featuresToCheck)
+	if check {
+		fmt.Println("neccessary features are enabled on AirServer")
+		void := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		targetPubKey, err := post(socket, "/pair-setup", "application/octet-stream", "1", void)
+		if err != nil {
+			return nil, err
+		}
+		privKey, err := GenerateKey()
+		if err != nil {
+			panic(err)
+		}
+		pubKey := &privKey.PublicKey
+		bytes := pubKey.Params().P.Bytes()
+		sharedKey, err := ECDHSharedKey(privKey, pubKey)
+		if err != nil {
+			panic(err)
+		}
+		arr1 := []byte{64, 64, 64, 64}
+		arr2 := append(arr1, bytes...)
+		arr3 := append(arr2, targetPubKey...)
+		resp, err := post(socket, "/pair-verify", "application/octet-stream", "2", arr3)
+		if err != nil {
+			panic(err)
+		}
+		signiture := resp[32:]
+		arr4 := []byte{0, 0, 0, 0}
+		signed := ed25519.Sign(sharedKey, signiture)
+		arr5 := append(arr4, signed...)
+		_, err1 := post(socket, "/pair-verify", "application/octet-stream", "3", arr5)
+		if err1 != nil {
+			panic(err)
+		}
+		req := []byte{0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0}
+		data1, err := post(socket, "/fp-setup", "application/octet-stream", "4", req)
+		if err != nil {
+			panic(err)
+		}
+		return data1, nil
+	} else {
+		fmt.Println("not all neccessary features are enabled on AirServer")
+		return nil, nil
 	}
-	resp, err := readResponse(socket)
-	if err != nil {
-		log.Info.Panic(err)
-		return nil
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Info.Panic(err)
-		return nil
-	}
-	return body
 }
+
 func doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, error) {
 	pairSetupPinRequestData, err := createPListStep1(map[string]string{
 		"method": "pin",
@@ -193,7 +294,7 @@ func doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	postErr := postData(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
+	postErr := postData(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "0", pairSetupPinRequestData)
 	if postErr != nil {
 		return nil, postErr
 	}
@@ -286,17 +387,17 @@ func doPairing() {
 	//fmt.Println("Salt length: " + fmt.Sprintf("%d", len(PairSetupPin1Response.Salt)))
 }
 
-func checkForFeatures(addr string) bool {
-	serverInfo, err := getInfo(addr)
+func checkForFeatures(socket net.Conn, features []int64) bool {
+	serverInfo, err := getInfo(socket)
 	if err != nil {
 		fmt.Printf("err: %v", err)
 	}
-	features := serverInfo["features"].(int64)
-	features = int64(features)
-	featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9))}
+	serverFeatures := serverInfo["features"].(int64)
+	serverFeatures = int64(serverFeatures)
+	//featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9))}
 	result := true
-	for _, bitmask := range featuresToCheck {
-		if features&bitmask != bitmask {
+	for _, bitmask := range features {
+		if serverFeatures&bitmask != bitmask {
 			result = false
 			break
 		}
@@ -312,13 +413,8 @@ func openTCPConnection(address string) (net.Conn, error) {
 	return conn, nil
 }
 
-func getInfo(addr string) (info map[string]interface{}, err error) {
-	socket, err := openTCPConnection(addr)
-	if err != nil {
-		log.Info.Panic(err)
-		return map[string]interface{}{}, err
-	}
-	postErr := postData(socket, "/info", "application/x-apple-binary-plist", nil)
+func getInfo(socket net.Conn) (info map[string]interface{}, err error) {
+	postErr := postData(socket, "/info", "application/x-apple-binary-plist", "0", nil)
 	if postErr != nil {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err
@@ -339,7 +435,6 @@ func getInfo(addr string) (info map[string]interface{}, err error) {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err
 	}
-	socket.Close()
 	return parsed, nil
 }
 
@@ -361,10 +456,13 @@ func main() {
 	if err != nil {
 		log.Info.Panic(err)
 	}
-	pairPin := doPairSetup(socket)
-	if pairPin == nil {
+	data, err := doPairSetup(socket)
+	if err != nil {
 		log.Info.Panic(err)
 	}
+	//fmt.Println(data)
 	socket.Close()
-	fmt.Println(len(pairPin))
+	//first := data[:32]
+	//second := data[32:]
+	fmt.Println(data)
 }
