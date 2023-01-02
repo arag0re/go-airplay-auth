@@ -3,16 +3,15 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
 	_ "crypto/ecdsa"
-	"crypto/ed25519"
+	_ "crypto/ed25519"
 	"crypto/elliptic"
 	_ "crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	_ "encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -70,8 +69,10 @@ func post(socket net.Conn, path string, contentType string, CSeq string, data []
 		log.Info.Panic(err)
 		return nil, err
 	}
+	fmt.Println(resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		panic(fmt.Errorf("got status %v", resp.StatusCode))
+		//return nil, err
 	} else {
 		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
@@ -215,21 +216,6 @@ func ECDHSharedKey(privKey *ecdsa.PrivateKey, pubKey *ecdsa.PublicKey) ([]byte, 
 	return sharedKey, nil
 }
 
-func Encrypt(key, data []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	ciphertext := make([]byte, aes.BlockSize+len(data))
-	iv := ciphertext[:aes.BlockSize]
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, err
-	}
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], data)
-	return ciphertext, nil
-}
-
 func pairPinStart(addr string) {
 	socket, err := openTCPConnection(addr)
 	if err != nil {
@@ -244,32 +230,27 @@ func doPairSetup(socket net.Conn) ([]byte, error) {
 	check := checkForFeatures(socket, featuresToCheck)
 	if check {
 		fmt.Println("neccessary features are enabled on AirServer")
-		void := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		void := make([]byte, 32)
 		targetPubKey, err := post(socket, "/pair-setup", "application/octet-stream", "1", void)
 		if err != nil {
 			return nil, err
 		}
-		privKey, err := GenerateKey()
+		curve := elliptic.P256()
+		privKey, _ := ecdsa.GenerateKey(curve, rand.Reader)
+		pub := privKey.PublicKey
+		pubKeyBytes := pub.X.Bytes()
+		//privKeyBytes := privKey.D.Bytes()
+		flag := []byte{64, 64, 64, 64}
+		thirtySixBytes := append(flag, pubKeyBytes...)
+		sixtyEightBytes := append(thirtySixBytes, targetPubKey...)
+		resp, err := post(socket, "/pair-verify", "application/octet-stream", "2", sixtyEightBytes)
 		if err != nil {
 			panic(err)
 		}
-		pubKey := &privKey.PublicKey
-		bytes := pubKey.Params().P.Bytes()
-		sharedKey, err := ECDHSharedKey(privKey, pubKey)
-		if err != nil {
-			panic(err)
-		}
-		arr1 := []byte{64, 64, 64, 64}
-		arr2 := append(arr1, bytes...)
-		arr3 := append(arr2, targetPubKey...)
-		resp, err := post(socket, "/pair-verify", "application/octet-stream", "2", arr3)
-		if err != nil {
-			panic(err)
-		}
-		signiture := resp[32:]
+		//key := resp[:32]
+		signatur := resp[32:]
 		arr4 := []byte{0, 0, 0, 0}
-		signed := ed25519.Sign(sharedKey, signiture)
-		arr5 := append(arr4, signed...)
+		arr5 := append(arr4, signatur...)
 		_, err1 := post(socket, "/pair-verify", "application/octet-stream", "3", arr5)
 		if err1 != nil {
 			panic(err)
@@ -439,19 +420,6 @@ func getInfo(socket net.Conn) (info map[string]interface{}, err error) {
 }
 
 func main() {
-	//pairPinStart("192.168.1.35:7000")
-	//info, err := getInfo("192.168.1.35:7000")
-	//if err != nil && info == nil {
-	//	log.Info.Panic(err)
-	//} else {
-	//	fmt.Println(info)
-	//}
-	//bool := checkForFeatures("192.168.1.35:7000")
-	//if bool {
-	//	fmt.Println("Features enabled")
-	//} else {
-	//	fmt.Println("Features not enabled")
-	//}
 	socket, err := openTCPConnection("192.168.1.35:7000")
 	if err != nil {
 		log.Info.Panic(err)
@@ -460,9 +428,6 @@ func main() {
 	if err != nil {
 		log.Info.Panic(err)
 	}
-	//fmt.Println(data)
 	socket.Close()
-	//first := data[:32]
-	//second := data[32:]
 	fmt.Println(data)
 }
