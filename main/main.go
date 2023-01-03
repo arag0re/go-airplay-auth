@@ -45,7 +45,7 @@ func post(socket net.Conn, path string, contentType string, CSeq string, data []
 		log.Info.Panic(err)
 		return nil, err
 	}
-	fmt.Println(resp.StatusCode)
+	//fmt.Println(resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		panic(fmt.Errorf("got status %v", resp.StatusCode))
 		//return nil, err
@@ -209,15 +209,15 @@ func aesCtr128Encrypt(key []byte, counter []byte, data []byte) []byte {
 	aesCtr := cipher.NewCTR(block, counter)
 	ciphertext := make([]byte, len(data))
 	aesCtr.XORKeyStream(ciphertext, data)
-	fmt.Printf("%x\n", len(ciphertext))
+	//fmt.Printf("%x\n", len(ciphertext))
 	return ciphertext
 }
 
 func doPairVerify1(socket net.Conn, public []byte, targetPublic []byte) ([]byte, error) {
-	flag := []byte{64, 0, 0, 0}
+	flag := []byte{64, 64, 64, 64}
 	data := append(flag, public...)
 	data1 := append(data, targetPublic...)
-	resp, err := post(socket, "/pair-verify", "application/octet-stream", "1", data1)
+	resp, err := post(socket, "/pair-verify", "application/octet-stream", "2", data1)
 	return resp, err
 }
 
@@ -234,6 +234,7 @@ func doPairVerify2(socket net.Conn, pairVerify1Response []byte, private *x25519.
 		return nil
 	}
 	ed25519priv := ed25519.NewKeyFromSeed(private.Bytes())
+	edPub := ed25519priv.Public().(ed25519.PublicKey)
 	curve25519.X25519(private.Bytes(), targetPubKey)
 	h := sha512.New()
 	h.Write([]byte("Pair-Verify-AES-Key"))
@@ -243,17 +244,20 @@ func doPairVerify2(socket net.Conn, pairVerify1Response []byte, private *x25519.
 	h.Write([]byte("Pair-Verify-AES-IV"))
 	h.Write(sharedSecret)
 	sharedSecretSha512AesIV := h.Sum(nil)[:16]
-	//aesCtr128EncryptMode := cipher.NewCTR(block, sharedSecretSha512AesIV)
 	data := ed25519.Sign(ed25519priv, append(public.Bytes(), targetPubKey...))
+	if !ed25519.Verify(edPub, append(public.Bytes(), targetPubKey...), data) {
+		fmt.Println("invalid signature")
+	} else {
+		fmt.Println("signature is valid")
+	}
 	encrypted := aesCtr128Encrypt(sharedSecretSha512AesKey, sharedSecretSha512AesIV, data)
 	arr := append([]byte{0, 0, 0, 0}, encrypted...)
+	//fmt.Println(len(arr))
 	data1, err := post(socket, "/pair-verify", "application/octet-stream", "3", arr)
 	if err != nil {
 		return err
 	}
 	print(data1)
-	//fmt.Println(len(data2))
-
 	return nil
 }
 
