@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha512"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,9 +17,23 @@ import (
 	"strconv"
 	"strings"
 
+	_ "github.com/brutella/hc/crypto"
 	"github.com/brutella/hc/log"
+	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/ed25519"
 	"howett.net/plist"
+	"maze.io/x/crypto/x25519"
 )
+
+type Plist struct {
+	XMLName xml.Name `xml:"plist"`
+	Dict    Dict     `xml:"dict"`
+}
+
+type Dict struct {
+	Key   string   `xml:"key"`
+	Array []string `xml:"array>string"`
+}
 
 func post(socket net.Conn, path string, contentType string, CSeq string, data []byte) ([]byte, error) {
 	postErr := postData(socket, path, contentType, CSeq, data)
@@ -138,7 +154,7 @@ func pairPinStart(addr string) {
 }
 
 func doPairSetup(socket net.Conn) ([]byte, error) {
-	featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9)), int64(math.Pow(2, 19)), int64(math.Pow(2, 20)), int64(math.Pow(2, 48))}
+	featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9)), int64(math.Pow(2, 14)), int64(math.Pow(2, 19)), int64(math.Pow(2, 20)), int64(math.Pow(2, 48))}
 	check := checkForFeatures(socket, featuresToCheck)
 	if check {
 		fmt.Println("neccessary features are enabled on AirServer")
@@ -147,36 +163,98 @@ func doPairSetup(socket net.Conn) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		curve := elliptic.P256()
-		privKey, _ := ecdsa.GenerateKey(curve, rand.Reader)
-		pub := privKey.PublicKey
-		pubKeyBytes := pub.X.Bytes()
-		//privKeyBytes := privKey.D.Bytes()
-		flag := []byte{64, 64, 64, 64}
-		thirtySixBytes := append(flag, pubKeyBytes...)
-		sixtyEightBytes := append(thirtySixBytes, targetPubKey...)
-		resp, err := post(socket, "/pair-verify", "application/octet-stream", "2", sixtyEightBytes)
+		var targetPubKey32 [32]byte
+		var privKey32 [32]byte
+		copy(targetPubKey32[:], targetPubKey)
+		private, err := x25519.GenerateKey(rand.Reader)
 		if err != nil {
-			panic(err)
+			fmt.Println(err)
+			return nil, err
 		}
-		//key := resp[:32]
-		signatur := resp[32:]
-		arr4 := []byte{0, 0, 0, 0}
-		arr5 := append(arr4, signatur...)
-		_, err1 := post(socket, "/pair-verify", "application/octet-stream", "3", arr5)
+		public := private.Public().(*x25519.PublicKey)
+		copy(privKey32[:], private.Bytes())
+		resp, err := doPairVerify1(socket, public.Bytes(), targetPubKey)
+		if err != nil {
+			fmt.Println(err)
+			return nil, err
+		}
+		err1 := doPairVerify2(socket, resp, private, public)
 		if err1 != nil {
-			panic(err)
+			panic(err1)
 		}
-		req := []byte{0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0}
-		data1, err := post(socket, "/fp-setup", "application/octet-stream", "4", req)
-		if err != nil {
-			panic(err)
-		}
-		return data1, nil
+		return nil, nil
 	} else {
 		fmt.Println("not all neccessary features are enabled on AirServer")
 		return nil, nil
 	}
+}
+
+func parsePublicKey(key []byte) (x25519.PublicKey, error) {
+	pub := x25519.PublicKey{}
+	pub.SetBytes(key)
+	return pub, nil
+}
+
+func getSharedKey(privKey *x25519.PrivateKey, pubKey *x25519.PublicKey) ([]byte, error) {
+	sharedSecret := privKey.Shared(pubKey)
+	return sharedSecret, nil
+}
+
+func aesCtr128Encrypt(key []byte, counter []byte, data []byte) []byte {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	aesCtr := cipher.NewCTR(block, counter)
+	ciphertext := make([]byte, len(data))
+	aesCtr.XORKeyStream(ciphertext, data)
+	fmt.Printf("%x\n", len(ciphertext))
+	return ciphertext
+}
+
+func doPairVerify1(socket net.Conn, public []byte, targetPublic []byte) ([]byte, error) {
+	flag := []byte{64, 0, 0, 0}
+	data := append(flag, public...)
+	data1 := append(data, targetPublic...)
+	resp, err := post(socket, "/pair-verify", "application/octet-stream", "1", data1)
+	return resp, err
+}
+
+func doPairVerify2(socket net.Conn, pairVerify1Response []byte, private *x25519.PrivateKey, public *x25519.PublicKey) error {
+	targetPubKey := pairVerify1Response[:32]
+	targetPub, err := parsePublicKey(targetPubKey)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	sharedSecret, err := getSharedKey(private, &targetPub)
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	ed25519priv := ed25519.NewKeyFromSeed(private.Bytes())
+	curve25519.X25519(private.Bytes(), targetPubKey)
+	h := sha512.New()
+	h.Write([]byte("Pair-Verify-AES-Key"))
+	h.Write(sharedSecret)
+	sharedSecretSha512AesKey := h.Sum(nil)[:16]
+	h.Reset()
+	h.Write([]byte("Pair-Verify-AES-IV"))
+	h.Write(sharedSecret)
+	sharedSecretSha512AesIV := h.Sum(nil)[:16]
+	//aesCtr128EncryptMode := cipher.NewCTR(block, sharedSecretSha512AesIV)
+	data := ed25519.Sign(ed25519priv, append(public.Bytes(), targetPubKey...))
+	encrypted := aesCtr128Encrypt(sharedSecretSha512AesKey, sharedSecretSha512AesIV, data)
+	arr := append([]byte{0, 0, 0, 0}, encrypted...)
+	data1, err := post(socket, "/pair-verify", "application/octet-stream", "3", arr)
+	if err != nil {
+		return err
+	}
+	print(data1)
+	//fmt.Println(len(data2))
+
+	return nil
 }
 
 func checkForFeatures(socket net.Conn, features []int64) bool {
@@ -206,21 +284,33 @@ func openTCPConnection(address string) (net.Conn, error) {
 }
 
 func getInfo(socket net.Conn) (info map[string]interface{}, err error) {
-	post, err := post(socket, "/info", "application/x-apple-binary-plist", "0", nil)
+	p := Plist{
+		Dict: Dict{
+			Key:   "qualifier",
+			Array: []string{"txtAirPlay"},
+		},
+	}
+	output, err := plist.MarshalIndent(&p, 1, "  ")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	serverInfo, err := post(socket, "/info", "application/x-apple-binary-plist", "0", output)
 	if err != nil {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err
 	}
-	parsed, err := Parse(post)
+	parsed, err := Parse(serverInfo)
 	if err != nil {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err
 	}
+	//fmt.Println(parsed)
 	return parsed, nil
 }
 
 func main() {
-	socket, err := openTCPConnection("192.168.1.55:7000")
+	socket, err := openTCPConnection("192.168.1.35:7000")
 	if err != nil {
 		log.Info.Panic(err)
 	}

@@ -4,5 +4,7 @@ go 1.15
 
 require (
 	github.com/brutella/hc v1.2.5
+	golang.org/x/crypto v0.4.0
 	howett.net/plist v1.0.0
+	maze.io/x/crypto v0.0.0-20190131090603-9b94c9afe066
 )
