@@ -3,6 +3,7 @@ package airplayauth
 import (
 	"bufio"
 	"bytes"
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -14,20 +15,17 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"main/internal/applesrp6c"
-	. "main/internal/srp6cryptoparams"
 	"math"
-	"math/big"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
-	_ "github.com/brutella/hc/crypto"
 	"github.com/brutella/hc/log"
+	"github.com/opencoff/go-srp"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/ed25519"
-	"howett.net/plist"
+	"github.com/groob/plist"
 	"maze.io/x/crypto/x25519"
 )
 
@@ -44,7 +42,6 @@ type PrivateKey struct {
 	PublicKey x25519.PublicKey
 	b         []byte
 }
-
 type Plist struct {
 	XMLName xml.Name `xml:"plist"`
 	Dict    Dict     `xml:"dict"`
@@ -89,6 +86,14 @@ func createPListStep1(data map[string]string) ([]byte, error) {
 		return nil, err
 	}
 	return b.Bytes(), nil
+}
+
+func createPlist(m map[string][]byte) ([]byte, error) {
+	data, err := plist.MarshalIndent(m, "")
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func createPListStep2(data map[string][]byte) ([]byte, error) {
@@ -214,7 +219,7 @@ func readResponse(conn net.Conn) (*http.Response, error) {
 
 func Parse(data []byte) (map[string]interface{}, error) {
 	var plistData map[string]interface{}
-	_, err := plist.Unmarshal(data, &plistData)
+	err := plist.Unmarshal(data, &plistData)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +239,7 @@ func randomString(length int) string {
 	return string(s)
 }
 
-func (a AirPlayAuth) Auth(socket net.Conn) net.Conn{
+func (a AirPlayAuth) Auth(socket net.Conn) net.Conn {
 	randomPrivateKey := make([]byte, 32)
 	_, err := rand.Read(randomPrivateKey)
 	if err != nil {
@@ -245,7 +250,7 @@ func (a AirPlayAuth) Auth(socket net.Conn) net.Conn{
 	if err1 != nil {
 		fmt.Println("Error generating random bytes:", err)
 	}
-	pairVerify1Response, err := a.doPairVerify1(socket, randomPublicKey, authKey);
+	pairVerify1Response, err := a.doPairVerify1(socket, randomPublicKey, authKey)
 	if err != nil {
 		fmt.Println("Error generating random bytes:", err)
 	}
@@ -255,8 +260,8 @@ func (a AirPlayAuth) Auth(socket net.Conn) net.Conn{
 	}
 	privateKey := x25519.PrivateKey{}
 	privateKey.SetBytes(randomPrivateKey)
-	a.doPairVerify2(socket, pairVerify1Response, &privateKey, &pub);
-	println("Pair Verify finished!");
+	a.doPairVerify2(socket, pairVerify1Response, &privateKey, &pub)
+	println("Pair Verify finished!")
 	return socket
 }
 
@@ -269,44 +274,46 @@ func (a AirPlayAuth) StartPairing(addr string) {
 	socket.Close()
 }
 
-func (a AirPlayAuth) DoMagic() string {
-	return "Magic function was called"
-}
-
 func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	socket, err := openTCPConnection(addr)
 	if err != nil {
 		log.Info.Panic(err)
 	}
-	featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9)), int64(math.Pow(2, 14)), int64(math.Pow(2, 19)), int64(math.Pow(2, 20)), int64(math.Pow(2, 48))}
+	featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
 	check := a.checkForFeatures(socket, featuresToCheck)
 	if check {
 		fmt.Println("neccessary features are enabled on AirServer")
-		defer socket.Close()
-
 		pairSetupPin1Response, err := a.doPairSetupPin1(socket)
 		if err != nil {
-			return nil, err
+			panic(err)
 		}
-		var srp6C applesrp6c.AppleSRP6ClientSessionImpl
-		srp6ClientSession := srp6C.NewAppleSRP6ClientSessionImpl()
-		srp6ClientSession.Step1(clientId, pin)
-		srp6ClientSession.Step2(SRP6CryptoParams.GetInstance(SRP6CryptoParams{}, 2048, "SHA-1"), big.NewInt(0).SetBytes(pairSetupPin1Response.Salt), big.NewInt(0).SetBytes(pairSetupPin1Response.Pk))
-		pairSetupPin2Response, err := a.doPairSetupPin2(socket, srp6ClientSession.PublicClientValue(), srp6ClientSession.GetClientEvidenceMessage())
+		srp, err := srp.NewWithHash(crypto.SHA1, 2048)
 		if err != nil {
-			return nil, err
+			panic(err)
 		}
-		srp6ClientSession.Step3(big.NewInt(0).SetBytes(pairSetupPin2Response.Proof))
-		_, err = a.doPairSetupPin3(socket, srp6ClientSession.GetSessionKeyHash())
+		c, err := srp.NewClient([]byte(clientId), []byte(pin))
+		if err != nil {
+			panic(err)
+		}
+		creds := c.Credentials()
+		splittedCreds := strings.Split(creds, ":")
+		xA := splittedCreds[1]
+		//strings.Split(creds, "")
+		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
+		auth, err := c.Generate(server_creds)
+		if err != nil {
+			panic(err)
+		}
+		pairSetupPin2Response, err := a.doPairSetupPin2(socket, []byte(xA), []byte(auth))
+		fmt.Println(pairSetupPin2Response)
+		if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
+			panic("authentication failed")
+		}
 		return socket, err
 	} else {
 		fmt.Println("not all neccessary features are enabled on AirServer")
 		return nil, err
 	}
-}
-
-func NewAppleSRP6ClientSessionImpl() {
-	panic("unimplemented")
 }
 
 func parsePublicKey(key []byte) (x25519.PublicKey, error) {
@@ -341,7 +348,7 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, e
 	if err != nil {
 		return nil, err
 	}
-	data, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "", pairSetupPinRequestData)
+	data, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "1", pairSetupPinRequestData)
 	if err != nil {
 		return nil, err
 	}
@@ -360,14 +367,14 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, e
 }
 
 func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte, clientEvidenceMessageM1 []byte) (PairSetupPin2Response, error) {
-	pairSetupPinRequestData, err := createPListStep2(map[string][]byte{
+	pairSetupPinRequestData, err := createPlist(map[string][]byte{
 		"pk":    publicClientValueA,
 		"proof": clientEvidenceMessageM1,
 	})
 	if err != nil {
 		return PairSetupPin2Response{}, err
 	}
-	pairSetupPin2ResponseBytes, err := a.post(nil, "/pair-setup-pin", "application/x-apple-binary-plist", "", pairSetupPinRequestData)
+	pairSetupPin2ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "", pairSetupPinRequestData)
 	if err != nil {
 		return PairSetupPin2Response{}, err
 	}
@@ -375,7 +382,7 @@ func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte,
 	if err != nil {
 		return PairSetupPin2Response{}, err
 	}
-	if _, ok := pairSetupPin2Response["pk"]; !ok {
+	if _, ok := pairSetupPin2Response["proof"]; !ok {
 		return PairSetupPin2Response{}, fmt.Errorf("missing proof key in response")
 	}
 	proof, ok := pairSetupPin2Response["proof"].([]byte)
@@ -454,12 +461,12 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	targetPub, err := parsePublicKey(targetPubKey)
 	if err != nil {
 		fmt.Println(err)
-		return nil
+		return err
 	}
 	sharedSecret, err := getSharedKey(private, &targetPub)
 	if err != nil {
 		fmt.Println(err)
-		return nil
+		return err
 	}
 	ed25519priv := ed25519.NewKeyFromSeed(private.Bytes())
 	edPub := ed25519priv.Public().(ed25519.PublicKey)
@@ -489,13 +496,13 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	return nil
 }
 
-func (a AirPlayAuth) checkForFeatures(socket net.Conn, features []int64) bool {
+func (a AirPlayAuth) checkForFeatures(socket net.Conn, features []uint64) bool {
 	serverInfo, err := a.getInfo(socket)
 	if err != nil {
-		fmt.Printf("err: %v", err)
+		panic(err)
 	}
-	serverFeatures := serverInfo["features"].(int64)
-	serverFeatures = int64(serverFeatures)
+	serverFeatures := serverInfo["features"].(uint64)
+	serverFeatures = uint64(serverFeatures)
 	//featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9))}
 	result := true
 	for _, bitmask := range features {
@@ -522,11 +529,13 @@ func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err 
 			Array: []string{"txtAirPlay"},
 		},
 	}
-	output, err := plist.MarshalIndent(&p, 1, "  ")
+
+	output, err := plist.MarshalIndent(&p, "")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	fmt.Println(Parse(output))
 	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", "0", output)
 	if err != nil {
 		log.Info.Panic(err)
