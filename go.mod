@@ -10,6 +10,7 @@ require (
 	github.com/gorilla/sessions v1.2.1 // indirect
 	github.com/groob/plist v0.0.0-20220217120414-63fa881b19a5
 	github.com/jmoiron/sqlx v1.3.5 // indirect
+	github.com/kong/go-srp v0.0.0-20191210190804-cde1efa3c083 // indirect
 	github.com/mattn/go-sqlite3 v1.14.16 // indirect
 	github.com/opencoff/go-srp v0.6.0
 	goji.io v2.0.2+incompatible // indirect

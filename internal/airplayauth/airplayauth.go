@@ -4,28 +4,32 @@ import (
 	"bufio"
 	"bytes"
 	"crypto"
+	_ "crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"io/ioutil"
+	_ "main/internal/bigintutils"
 	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/brutella/hc/log"
+	"github.com/groob/plist"
 	"github.com/opencoff/go-srp"
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/ed25519"
-	"github.com/groob/plist"
 	"maze.io/x/crypto/x25519"
 )
 
@@ -73,7 +77,7 @@ func (a AirPlayAuth) NewAirPlayAuth(address string, authToken string) error {
 	}
 	copy(authKey[:], authKeyBytes)
 	fmt.Println("clientId:", clientId)
-	fmt.Println("authKey:", authKey)
+	fmt.Println("authKey:", authKeyBytes)
 	//authKey = ed25519.NewKeyFromSeed(authKey)
 	return nil
 }
@@ -117,8 +121,16 @@ func generateNewAuthToken() string {
 	return clientID + "@" + privateKeyHex
 }
 
-func (a *AirPlayAuth) post(socket net.Conn, path string, contentType string, CSeq string, data []byte) ([]byte, error) {
-	postErr := postData(socket, path, contentType, CSeq, data)
+func (a *AirPlayAuth) post(socket net.Conn, path string, contentType string, data []byte) ([]byte, error) {
+	if socket == nil {
+		fmt.Println("no socket provided!")
+		socket1, err := openTCPConnection(addr)
+		if err != nil {
+			return nil, err
+		}
+		socket = socket1
+	}
+	postErr := postData(socket, path, contentType, data)
 	if postErr != nil {
 		return nil, postErr
 	}
@@ -127,10 +139,8 @@ func (a *AirPlayAuth) post(socket net.Conn, path string, contentType string, CSe
 		log.Info.Panic(err)
 		return nil, err
 	}
-	//fmt.Println(resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		panic(fmt.Errorf("got status %v", resp.StatusCode))
-		//return nil, err
 	} else {
 		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
@@ -142,16 +152,14 @@ func (a *AirPlayAuth) post(socket net.Conn, path string, contentType string, CSe
 	}
 }
 
-func postData(socket net.Conn, path string, contentType string, CSeq string, data []byte) error {
+func postData(socket net.Conn, path string, contentType string, data []byte) error {
 	var req strings.Builder
 	req.WriteString(fmt.Sprintf("POST %s HTTP/1.1\r\n", path))
-	req.WriteString("User-Agent: AirPlay/415.3\r\n")
+	req.WriteString("User-Agent: AirPlay/320.20\r\n")
+	req.WriteString("Connection: keep-alive\r\n")
 	req.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(data)))
 	if contentType != "" {
 		req.WriteString(fmt.Sprintf("Content-Type: %s\r\n", contentType))
-	}
-	if CSeq != "" {
-		req.WriteString(fmt.Sprintf("CSeq: %v\r\n", CSeq))
 	}
 	req.WriteString("\r\n")
 	req.Write(data)
@@ -270,8 +278,26 @@ func (a AirPlayAuth) StartPairing(addr string) {
 	if err != nil {
 		panic(err)
 	}
-	a.post(socket, "/pair-pin-start", "", "0", nil)
+	a.post(socket, "/pair-pin-start", "", nil)
 	socket.Close()
+}
+
+func sendToServer(socket net.Conn, srpA *big.Int) error {
+	err := binary.Write(socket, binary.BigEndian, srpA)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func receiveFromServer(socket net.Conn) []byte {
+	reader := bufio.NewReader(socket)
+	//reader.ReadLine()
+	bytes, err :=reader.ReadBytes('\n')
+	if err != nil {
+		panic(err)
+	}
+	return bytes
 }
 
 func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
@@ -298,17 +324,25 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 		creds := c.Credentials()
 		splittedCreds := strings.Split(creds, ":")
 		xA := splittedCreds[1]
-		//strings.Split(creds, "")
+		strings.Split(creds, "")
 		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
 		auth, err := c.Generate(server_creds)
 		if err != nil {
 			panic(err)
 		}
-		pairSetupPin2Response, err := a.doPairSetupPin2(socket, []byte(xA), []byte(auth))
-		fmt.Println(pairSetupPin2Response)
-		if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
-			panic("authentication failed")
+		xABytes, err := hex.DecodeString(xA)
+		if err != nil {
+			panic(err)
 		}
+		m1Bytes, err := hex.DecodeString(auth)
+		if err != nil {
+			panic(err)
+		}
+		pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
+		//if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
+		//	panic("authentication failed")
+		//}
+		fmt.Println(pairSetupPin2Response)
 		return socket, err
 	} else {
 		fmt.Println("not all neccessary features are enabled on AirServer")
@@ -348,11 +382,12 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, e
 	if err != nil {
 		return nil, err
 	}
-	data, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "1", pairSetupPinRequestData)
+	data, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
 	if err != nil {
 		return nil, err
 	}
 	pairSetupPin1Response, err := Parse(data)
+	//fmt.Println(hex.EncodeToString(pairSetupPin1Response["pk"].([]byte)))
 	if err != nil {
 		return nil, err
 	}
@@ -366,6 +401,7 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, e
 	return nil, fmt.Errorf("missing 'pk' and/or 'salt' keys in response")
 }
 
+
 func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte, clientEvidenceMessageM1 []byte) (PairSetupPin2Response, error) {
 	pairSetupPinRequestData, err := createPlist(map[string][]byte{
 		"pk":    publicClientValueA,
@@ -374,7 +410,7 @@ func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte,
 	if err != nil {
 		return PairSetupPin2Response{}, err
 	}
-	pairSetupPin2ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "", pairSetupPinRequestData)
+	pairSetupPin2ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
 	if err != nil {
 		return PairSetupPin2Response{}, err
 	}
@@ -423,7 +459,7 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 	if err != nil {
 		return PairSetupPin3Response{}, err
 	}
-	pairSetupPin3ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", "", pairSetupPinRequestData)
+	pairSetupPin3ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/octet-stream", pairSetupPinRequestData)
 	if err != nil {
 		return PairSetupPin3Response{}, err
 	}
@@ -452,7 +488,7 @@ func (a AirPlayAuth) doPairVerify1(socket net.Conn, public []byte, targetPublic 
 	flag := []byte{64, 64, 64, 64}
 	data := append(flag, public...)
 	data1 := append(data, targetPublic...)
-	resp, err := a.post(socket, "/pair-verify", "application/octet-stream", "2", data1)
+	resp, err := a.post(socket, "/pair-verify", "application/octet-stream", data1)
 	return resp, err
 }
 
@@ -488,7 +524,7 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	encrypted := aesCtr128Encrypt(sharedSecretSha512AesKey, sharedSecretSha512AesIV, data)
 	arr := append([]byte{0, 0, 0, 0}, encrypted...)
 	//fmt.Println(len(arr))
-	data1, err := a.post(socket, "/pair-verify", "application/octet-stream", "3", arr)
+	data1, err := a.post(socket, "/pair-verify", "application/octet-stream", arr)
 	if err != nil {
 		return err
 	}
@@ -536,7 +572,7 @@ func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err 
 		return
 	}
 	fmt.Println(Parse(output))
-	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", "0", output)
+	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", output)
 	if err != nil {
 		log.Info.Panic(err)
 		return map[string]interface{}{}, err

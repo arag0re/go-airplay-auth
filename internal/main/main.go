@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"main/internal/airplayauth"
-	_ "main/internal/test"
 	"os"
 	"strings"
 )
