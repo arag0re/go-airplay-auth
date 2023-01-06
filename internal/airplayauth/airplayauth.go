@@ -17,8 +17,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"main/internal/srp"
-	_ "main/internal/srp"
+	"main/internal/go_apple_srp"
 	"math"
 	"net"
 	"net/http"
@@ -38,11 +37,11 @@ var clientId = ""
 var authKey ed25519.PrivateKey
 var addr string
 
-const m1Expected string = "4b4e638bf08526e4229fd079675fedfd329b97ef"
-const xAExpected string = "47662731cbe1ba0b130dc5e65320dc2a4b60371e086212a7a55ed4a3653b2d1e861569309c97b4f88433564bd47f6de13ecc440db26998478b266eaa8195a81c28f89a989bc538c477be302fd96bb3fa809e9a94b0aac28d6a00aa057892ba26b2b2cad4d8ec6a9e4207754926c985c393feb6e8b7fb82bd8043709866d7b53a592a940d8e44a7d08fbbda51bf5c9091c251988236147364cb75ad5a4efbeed242fd78496f0cda365965255c8214bd264c259fa2f2a8bfec70eecb32d2ded4c5c35e5e802a22bf58f7cd629fb2f3b4a2498b95f63eab37be9fb0f75c3fcbea8c083d0311302ebc2c3bc0a0525ba5bf3fcffe5b5668b4905a8e6cdb70d89f4b1b"
-const ID string = "366B4165DD64AD3A"
-const testPK string = "4223ddb35967419ddfece40d6b552b797140129c1c262da1b83d413a7f9674aff834171336dabadf9faa95962331e44838d5f66c46649d583ee44827755651215dcd5881056f7fd7d6445b844ccc5793cc3bbd5887029a5abef8b173a3ad8f81326435e9d49818275734ef483b2541f4e2b99b838164ad5fe4a7cae40599fa41bd0e72cb5495bdd5189805da44b7df9b7ed29af326bb526725c2b1f4115f9d91e41638876eeb1db26ef6aed5373f72e3907cc72997ee9132a0dcafda24115730c9db904acbed6d81dc4b02200a5f5281bf321d5a3216a709191ce6ad36d383e79be76e37a2ed7082007c51717e099e7bedd7387c3f82a916d6aca2eb2b6ff3f3"
-const testSalt string = "d62c98fe76c77ad445828c33063fc36f"
+// const m1Expected string = "4b4e638bf08526e4229fd079675fedfd329b97ef"
+// const xAExpected string = "47662731cbe1ba0b130dc5e65320dc2a4b60371e086212a7a55ed4a3653b2d1e861569309c97b4f88433564bd47f6de13ecc440db26998478b266eaa8195a81c28f89a989bc538c477be302fd96bb3fa809e9a94b0aac28d6a00aa057892ba26b2b2cad4d8ec6a9e4207754926c985c393feb6e8b7fb82bd8043709866d7b53a592a940d8e44a7d08fbbda51bf5c9091c251988236147364cb75ad5a4efbeed242fd78496f0cda365965255c8214bd264c259fa2f2a8bfec70eecb32d2ded4c5c35e5e802a22bf58f7cd629fb2f3b4a2498b95f63eab37be9fb0f75c3fcbea8c083d0311302ebc2c3bc0a0525ba5bf3fcffe5b5668b4905a8e6cdb70d89f4b1b"
+// const ID string = "366B4165DD64AD3A"
+// const testPK string = "4223ddb35967419ddfece40d6b552b797140129c1c262da1b83d413a7f9674aff834171336dabadf9faa95962331e44838d5f66c46649d583ee44827755651215dcd5881056f7fd7d6445b844ccc5793cc3bbd5887029a5abef8b173a3ad8f81326435e9d49818275734ef483b2541f4e2b99b838164ad5fe4a7cae40599fa41bd0e72cb5495bdd5189805da44b7df9b7ed29af326bb526725c2b1f4115f9d91e41638876eeb1db26ef6aed5373f72e3907cc72997ee9132a0dcafda24115730c9db904acbed6d81dc4b02200a5f5281bf321d5a3216a709191ce6ad36d383e79be76e37a2ed7082007c51717e099e7bedd7387c3f82a916d6aca2eb2b6ff3f3"
+// const testSalt string = "d62c98fe76c77ad445828c33063fc36f"
 const charset string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type AirPlayAuth struct {
@@ -301,7 +300,7 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 		if err != nil {
 			panic(err)
 		}
-		srp, err := srp.NewWithHash(crypto.SHA1, 2048)
+		srp, err := go_apple_srp.NewWithHash(crypto.SHA1, 2048)
 		if err != nil {
 			panic(err)
 		}
@@ -312,23 +311,11 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 		creds := c.Credentials()
 		splittedCreds := strings.Split(creds, ":")
 		xA := splittedCreds[1]
-		//fmt.Println(len(pairSetupPin1Response.Pk))
-		//fmt.Println(len(pairSetupPin1Response.Salt))
 		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
 		auth, err := c.Generate(server_creds)
 		if err != nil {
 			panic(err)
 		}
-		//if xA == xAExpected {
-		//	fmt.Println("A is matching expected result")
-		//} else {
-		//	fmt.Println("A not matching expectation")
-		//}
-		//if auth == m1Expected {
-		//	fmt.Println("M1 is matching expected result")
-		//} else {
-		//	fmt.Println("M1 not matching expectation")
-		//}
 		xABytes, err := hex.DecodeString(xA)
 		if err != nil {
 			panic(err)
@@ -338,9 +325,11 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 			panic(err)
 		}
 		pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
-		//if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
-		//	panic("authentication failed")
-		//}
+		fmt.Println(len(pairSetupPin2Response.Proof))
+		proof := hex.EncodeToString(pairSetupPin2Response.Proof)
+		if !c.ServerOk(proof) {
+			panic("authentication failed")
+		}
 		fmt.Println(pairSetupPin2Response)
 		return socket, err
 	} else {
@@ -408,10 +397,6 @@ func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte,
 	if err != nil {
 		return PairSetupPin2Response{}, err
 	}
-	err1 := ioutil.WriteFile("file.plist", pairSetupPinRequestData, 0644)
-	if err1 != nil {
-		panic(err1)
-	}
 	pairSetupPin2ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
 	if err != nil {
 		return PairSetupPin2Response{}, err
@@ -419,6 +404,14 @@ func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte,
 	pairSetupPin2Response, err := Parse(pairSetupPin2ResponseBytes)
 	if err != nil {
 		return PairSetupPin2Response{}, err
+	}
+	plist, err := plist.Marshal(pairSetupPin2Response)
+	if err != nil {
+		return PairSetupPin2Response{}, err
+	}
+	err1 := ioutil.WriteFile("proof.plist",plist, 0644)
+	if err1 != nil {
+		panic(err1)
 	}
 	if _, ok := pairSetupPin2Response["proof"]; !ok {
 		return PairSetupPin2Response{}, fmt.Errorf("missing proof key in response")
@@ -573,7 +566,7 @@ func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err 
 		fmt.Println(err)
 		return
 	}
-	fmt.Println(Parse(output))
+	//fmt.Println(Parse(output))
 	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", output)
 	if err != nil {
 		log.Info.Panic(err)
