@@ -13,6 +13,7 @@ require (
 	github.com/kong/go-srp v0.0.0-20191210190804-cde1efa3c083 // indirect
 	github.com/mattn/go-sqlite3 v1.14.16 // indirect
 	github.com/opencoff/go-srp v0.6.0
+	github.com/tadglines/go-pkgs v0.0.0-20210623144937-b983b20f54f9
 	goji.io v2.0.2+incompatible // indirect
 	golang.org/x/crypto v0.4.0
 	howett.net/plist v1.0.0

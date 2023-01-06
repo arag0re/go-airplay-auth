@@ -19,6 +19,7 @@ import (
 	"io/ioutil"
 	"main/internal/srp"
 	_ "main/internal/srp"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -292,73 +293,60 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	if err != nil {
 		log.Info.Panic(err)
 	}
-	//featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
-	//check := a.checkForFeatures(socket, featuresToCheck)
-	//if check {
-	fmt.Println("neccessary features are enabled on AirServer")
-	//pairSetupPin1Response, err := a.doPairSetupPin1(socket)
-	//if err != nil {
-	//	panic(err)
-	//}
-	srp, err := srp.NewWithHash(crypto.SHA1, 2048)
-	if err != nil {
-		panic(err)
-	}
-	c, err := srp.NewClient([]byte(ID), []byte("1234"))
-	if err != nil {
-		panic(err)
-	}
-	creds := c.Credentials()
-	splittedCreds := strings.Split(creds, ":")
-	xA := splittedCreds[1]
-	//fmt.Println(len(pairSetupPin1Response.Pk))
-	//fmt.Println(len(pairSetupPin1Response.Salt))
-	server_creds := testSalt + ":" + testPK
-	auth, err := c.Generate(server_creds)
-	if err != nil {
-		panic(err)
-	}
-	if xA == xAExpected {
-		fmt.Println("A is matching expected result")
+	featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
+	check := a.checkForFeatures(socket, featuresToCheck)
+	if check {
+		fmt.Println("neccessary features are enabled on AirServer")
+		pairSetupPin1Response, err := a.doPairSetupPin1(socket)
+		if err != nil {
+			panic(err)
+		}
+		srp, err := srp.NewWithHash(crypto.SHA1, 2048)
+		if err != nil {
+			panic(err)
+		}
+		c, err := srp.NewClient([]byte(clientId), []byte(pin))
+		if err != nil {
+			panic(err)
+		}
+		creds := c.Credentials()
+		splittedCreds := strings.Split(creds, ":")
+		xA := splittedCreds[1]
+		//fmt.Println(len(pairSetupPin1Response.Pk))
+		//fmt.Println(len(pairSetupPin1Response.Salt))
+		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
+		auth, err := c.Generate(server_creds)
+		if err != nil {
+			panic(err)
+		}
+		//if xA == xAExpected {
+		//	fmt.Println("A is matching expected result")
+		//} else {
+		//	fmt.Println("A not matching expectation")
+		//}
+		//if auth == m1Expected {
+		//	fmt.Println("M1 is matching expected result")
+		//} else {
+		//	fmt.Println("M1 not matching expectation")
+		//}
+		xABytes, err := hex.DecodeString(xA)
+		if err != nil {
+			panic(err)
+		}
+		m1Bytes, err := hex.DecodeString(auth)
+		if err != nil {
+			panic(err)
+		}
+		pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
+		//if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
+		//	panic("authentication failed")
+		//}
+		fmt.Println(pairSetupPin2Response)
+		return socket, err
 	} else {
-		fmt.Println("A not matching expectation")
+		fmt.Println("not all neccessary features are enabled on AirServer")
+		return nil, err
 	}
-	if auth == m1Expected {
-		fmt.Println("M1 is matching expected result")
-	} else {
-		fmt.Println("M1 not matching expectation")
-	}
-	xABytes, err := hex.DecodeString(xA)
-	if err != nil {
-		panic(err)
-	}
-	m1Bytes, err := hex.DecodeString(auth)
-	if err != nil {
-		panic(err)
-	}
-
-	//salt, err := hex.DecodeString(testSalt)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//pk, err := hex.DecodeString(testPK)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//session := srp.NewSetupClientSession(ID, "1234")
-	//session.GenerateKeys(salt, pk)
-	//fmt.Println("A: " + hex.EncodeToString(session.PublicKey))
-	//fmt.Println("M1: " + hex.EncodeToString(session.Proof))
-	pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
-	//if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
-	//	panic("authentication failed")
-	//}
-	fmt.Println(pairSetupPin2Response)
-	return socket, err
-	//} else {
-	//	fmt.Println("not all neccessary features are enabled on AirServer")
-	//	return nil, err
-	//}
 }
 
 func parsePublicKey(key []byte) (x25519.PublicKey, error) {

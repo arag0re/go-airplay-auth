@@ -345,16 +345,16 @@ type Client struct {
 
 // NewClient constructs an SRP client instance.
 func (s *SRP) NewClient(I, p []byte) (*Client, error) {
-	a, err := hex.DecodeString("a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d")
-	if err != nil {
-		print(err)
-	}
+	//a, err := hex.DecodeString("a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d")
+	//if err != nil {
+	//	print(err)
+	//}
 	pf := s.pf
 	c := &Client{
 		s: s,
 		i: I,
 		p: p,
-		a:/*randBigInt(pf.n * 8)*/ new(big.Int).SetBytes(a),
+		a:randBigInt(pf.n * 8) /*new(big.Int).SetBytes(a)*/,
 		k: s.hashint(pad(pf.N, pf.n), pad(pf.g, pf.n)),
 	}
 
@@ -410,24 +410,33 @@ func (c *Client) Generate(srv string) (string, error) {
 	K1 := c.s.hashbyte(append(S.Bytes(), []byte{0, 0, 0, 0}...))
 	K2 := c.s.hashbyte(append(S.Bytes(), []byte{0, 0, 0, 1}...))
 	c.xK = append(K1, K2...)
-	expectedK := "9a689113a76b44583e73f9662eb172e830886ed988f04c6c0030f0e93c68784de27dbf30c5d151fb"
-	strK := hex.EncodeToString(c.xK)
-	if err != nil {
-		panic(err)
-	}
-	if strK == expectedK {
-		fmt.Println("K matches expectated result")
-	} else {
-		fmt.Println("K not matching expectation")
-		fmt.Println(strK)
-	}
-	//c.xM = c.s.hashbyte(c.xA.Bytes(), B.Bytes(), S.Bytes())
-	//c.xM = c.s.hashbyte(c.i, salt, c.xA.Bytes(), B.Bytes(), S.Bytes())
-	c.xM = c.s.hashbyte(pad(c.xA, pf.n), pad(B, pf.n), S.Bytes())
+	//expectedK := "9a689113a76b44583e73f9662eb172e830886ed988f04c6c0030f0e93c68784de27dbf30c5d151fb"
+	//strK := hex.EncodeToString(c.xK)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//if strK == expectedK {
+	//	fmt.Println("K matches expectated result")
+	//} else {
+	//	fmt.Println("K not matching expectation")
+	//	fmt.Println(strK)
+	//}
+	hN := c.s.hashbyte(pf.N.Bytes())
+	hg := c.s.hashbyte(pf.g.Bytes())
+	hNhg := xor(hN, hg)
+	hu := c.s.hashbyte(c.i)
+	c.xM = c.s.hashbyte(hNhg, hu, salt, c.xA.Bytes(), B.Bytes(), c.xK)
 	fmt.Println(len(c.xM))
-	//fmt.Printf("Client %d:\n\tx=%x\n\tS=%x\n\tK=%x\n\tM=%x\n", c.n *8, x, S, c.xK, c.xM)
 
 	return hex.EncodeToString(c.xM), nil
+}
+
+func xor(b1, b2 []byte) []byte {
+    result := make([]byte, len(b1))
+    for i, _ := range b1 {
+        result[i] = b1[i] ^ b2[i]
+    }
+    return result
 }
 
 func computeSessionKey(N, g, k, x, u, a, B *big.Int) *big.Int {
