@@ -4,32 +4,32 @@ import (
 	"bufio"
 	"bytes"
 	"crypto"
-	_ "crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	_ "crypto/sha1"
 	"crypto/sha512"
 	"crypto/x509"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"io/ioutil"
-	_ "main/internal/bigintutils"
-	"math"
-	"math/big"
+	"main/internal/srp"
+	_ "main/internal/srp"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
+	_ "github.com/brutella/hc/hap/pair"
 	"github.com/brutella/hc/log"
 	"github.com/groob/plist"
-	"github.com/opencoff/go-srp"
+	_ "github.com/opencoff/go-srp"
+	_ "github.com/tadglines/go-pkgs/crypto/srp"
 	"golang.org/x/crypto/curve25519"
-	"golang.org/x/crypto/ed25519"
 	"maze.io/x/crypto/x25519"
 )
 
@@ -37,7 +37,12 @@ var clientId = ""
 var authKey ed25519.PrivateKey
 var addr string
 
-const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const m1Expected string = "4b4e638bf08526e4229fd079675fedfd329b97ef"
+const xAExpected string = "47662731cbe1ba0b130dc5e65320dc2a4b60371e086212a7a55ed4a3653b2d1e861569309c97b4f88433564bd47f6de13ecc440db26998478b266eaa8195a81c28f89a989bc538c477be302fd96bb3fa809e9a94b0aac28d6a00aa057892ba26b2b2cad4d8ec6a9e4207754926c985c393feb6e8b7fb82bd8043709866d7b53a592a940d8e44a7d08fbbda51bf5c9091c251988236147364cb75ad5a4efbeed242fd78496f0cda365965255c8214bd264c259fa2f2a8bfec70eecb32d2ded4c5c35e5e802a22bf58f7cd629fb2f3b4a2498b95f63eab37be9fb0f75c3fcbea8c083d0311302ebc2c3bc0a0525ba5bf3fcffe5b5668b4905a8e6cdb70d89f4b1b"
+const ID string = "366B4165DD64AD3A"
+const testPK string = "4223ddb35967419ddfece40d6b552b797140129c1c262da1b83d413a7f9674aff834171336dabadf9faa95962331e44838d5f66c46649d583ee44827755651215dcd5881056f7fd7d6445b844ccc5793cc3bbd5887029a5abef8b173a3ad8f81326435e9d49818275734ef483b2541f4e2b99b838164ad5fe4a7cae40599fa41bd0e72cb5495bdd5189805da44b7df9b7ed29af326bb526725c2b1f4115f9d91e41638876eeb1db26ef6aed5373f72e3907cc72997ee9132a0dcafda24115730c9db904acbed6d81dc4b02200a5f5281bf321d5a3216a709191ce6ad36d383e79be76e37a2ed7082007c51717e099e7bedd7387c3f82a916d6aca2eb2b6ff3f3"
+const testSalt string = "d62c98fe76c77ad445828c33063fc36f"
+const charset string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type AirPlayAuth struct {
 }
@@ -156,7 +161,7 @@ func postData(socket net.Conn, path string, contentType string, data []byte) err
 	var req strings.Builder
 	req.WriteString(fmt.Sprintf("POST %s HTTP/1.1\r\n", path))
 	req.WriteString("User-Agent: AirPlay/320.20\r\n")
-	req.WriteString("Connection: keep-alive\r\n")
+	//req.WriteString("Connection: keep-alive\r\n")
 	req.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(data)))
 	if contentType != "" {
 		req.WriteString(fmt.Sprintf("Content-Type: %s\r\n", contentType))
@@ -282,72 +287,78 @@ func (a AirPlayAuth) StartPairing(addr string) {
 	socket.Close()
 }
 
-func sendToServer(socket net.Conn, srpA *big.Int) error {
-	err := binary.Write(socket, binary.BigEndian, srpA)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func receiveFromServer(socket net.Conn) []byte {
-	reader := bufio.NewReader(socket)
-	//reader.ReadLine()
-	bytes, err :=reader.ReadBytes('\n')
-	if err != nil {
-		panic(err)
-	}
-	return bytes
-}
-
 func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	socket, err := openTCPConnection(addr)
 	if err != nil {
 		log.Info.Panic(err)
 	}
-	featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
-	check := a.checkForFeatures(socket, featuresToCheck)
-	if check {
-		fmt.Println("neccessary features are enabled on AirServer")
-		pairSetupPin1Response, err := a.doPairSetupPin1(socket)
-		if err != nil {
-			panic(err)
-		}
-		srp, err := srp.NewWithHash(crypto.SHA1, 2048)
-		if err != nil {
-			panic(err)
-		}
-		c, err := srp.NewClient([]byte(clientId), []byte(pin))
-		if err != nil {
-			panic(err)
-		}
-		creds := c.Credentials()
-		splittedCreds := strings.Split(creds, ":")
-		xA := splittedCreds[1]
-		strings.Split(creds, "")
-		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
-		auth, err := c.Generate(server_creds)
-		if err != nil {
-			panic(err)
-		}
-		xABytes, err := hex.DecodeString(xA)
-		if err != nil {
-			panic(err)
-		}
-		m1Bytes, err := hex.DecodeString(auth)
-		if err != nil {
-			panic(err)
-		}
-		pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
-		//if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
-		//	panic("authentication failed")
-		//}
-		fmt.Println(pairSetupPin2Response)
-		return socket, err
-	} else {
-		fmt.Println("not all neccessary features are enabled on AirServer")
-		return nil, err
+	//featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
+	//check := a.checkForFeatures(socket, featuresToCheck)
+	//if check {
+	fmt.Println("neccessary features are enabled on AirServer")
+	//pairSetupPin1Response, err := a.doPairSetupPin1(socket)
+	//if err != nil {
+	//	panic(err)
+	//}
+	srp, err := srp.NewWithHash(crypto.SHA1, 2048)
+	if err != nil {
+		panic(err)
 	}
+	c, err := srp.NewClient([]byte(ID), []byte("1234"))
+	if err != nil {
+		panic(err)
+	}
+	creds := c.Credentials()
+	splittedCreds := strings.Split(creds, ":")
+	xA := splittedCreds[1]
+	//fmt.Println(len(pairSetupPin1Response.Pk))
+	//fmt.Println(len(pairSetupPin1Response.Salt))
+	server_creds := testSalt + ":" + testPK
+	auth, err := c.Generate(server_creds)
+	if err != nil {
+		panic(err)
+	}
+	if xA == xAExpected {
+		fmt.Println("A is matching expected result")
+	} else {
+		fmt.Println("A not matching expectation")
+	}
+	if auth == m1Expected {
+		fmt.Println("M1 is matching expected result")
+	} else {
+		fmt.Println("M1 not matching expectation")
+	}
+	xABytes, err := hex.DecodeString(xA)
+	if err != nil {
+		panic(err)
+	}
+	m1Bytes, err := hex.DecodeString(auth)
+	if err != nil {
+		panic(err)
+	}
+
+	//salt, err := hex.DecodeString(testSalt)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//pk, err := hex.DecodeString(testPK)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//session := srp.NewSetupClientSession(ID, "1234")
+	//session.GenerateKeys(salt, pk)
+	//fmt.Println("A: " + hex.EncodeToString(session.PublicKey))
+	//fmt.Println("M1: " + hex.EncodeToString(session.Proof))
+	pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
+	//if !c.ServerOk(string(pairSetupPin2Response.Proof)) {
+	//	panic("authentication failed")
+	//}
+	fmt.Println(pairSetupPin2Response)
+	return socket, err
+	//} else {
+	//	fmt.Println("not all neccessary features are enabled on AirServer")
+	//	return nil, err
+	//}
 }
 
 func parsePublicKey(key []byte) (x25519.PublicKey, error) {
@@ -401,7 +412,6 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, e
 	return nil, fmt.Errorf("missing 'pk' and/or 'salt' keys in response")
 }
 
-
 func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte, clientEvidenceMessageM1 []byte) (PairSetupPin2Response, error) {
 	pairSetupPinRequestData, err := createPlist(map[string][]byte{
 		"pk":    publicClientValueA,
@@ -409,6 +419,10 @@ func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte,
 	})
 	if err != nil {
 		return PairSetupPin2Response{}, err
+	}
+	err1 := ioutil.WriteFile("file.plist", pairSetupPinRequestData, 0644)
+	if err1 != nil {
+		panic(err1)
 	}
 	pairSetupPin2ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
 	if err != nil {
