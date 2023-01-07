@@ -3,13 +3,11 @@ package airplayauth
 import (
 	"bufio"
 	"bytes"
-	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	_ "crypto/sha1"
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/hex"
@@ -17,18 +15,15 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"main/internal/go_apple_srp"
+	"main/internal/srp"
 	"math"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
-	_ "github.com/brutella/hc/hap/pair"
 	"github.com/brutella/hc/log"
 	"github.com/groob/plist"
-	_ "github.com/opencoff/go-srp"
-	_ "github.com/tadglines/go-pkgs/crypto/srp"
 	"golang.org/x/crypto/curve25519"
 	"maze.io/x/crypto/x25519"
 )
@@ -36,15 +31,35 @@ import (
 var clientId = ""
 var authKey ed25519.PrivateKey
 var addr string
+var ID string = "366B4165DD64AD3A"
+var pk string = "4223ddb35967419ddfece40d6b552b797140129c1c262da1b83d413a7f9674aff834171336dabadf9faa95962331e44838d5f66c46649d583ee44827755651215dcd5881056f7fd7d6445b844ccc5793cc3bbd5887029a5abef8b173a3ad8f81326435e9d49818275734ef483b2541f4e2b99b838164ad5fe4a7cae40599fa41bd0e72cb5495bdd5189805da44b7df9b7ed29af326bb526725c2b1f4115f9d91e41638876eeb1db26ef6aed5373f72e3907cc72997ee9132a0dcafda24115730c9db904acbed6d81dc4b02200a5f5281bf321d5a3216a709191ce6ad36d383e79be76e37a2ed7082007c51717e099e7bedd7387c3f82a916d6aca2eb2b6ff3f3"
+var salt string = "d62c98fe76c77ad445828c33063fc36f"
+var A string = "47662731cbe1ba0b130dc5e65320dc2a4b60371e086212a7a55ed4a3653b2d1e861569309c97b4f88433564bd47f6de13ecc440db26998478b266eaa8195a81c28f89a989bc538c477be302fd96bb3fa809e9a94b0aac28d6a00aa057892ba26b2b2cad4d8ec6a9e4207754926c985c393feb6e8b7fb82bd8043709866d7b53a592a940d8e44a7d08fbbda51bf5c9091c251988236147364cb75ad5a4efbeed242fd78496f0cda365965255c8214bd264c259fa2f2a8bfec70eecb32d2ded4c5c35e5e802a22bf58f7cd629fb2f3b4a2498b95f63eab37be9fb0f75c3fcbea8c083d0311302ebc2c3bc0a0525ba5bf3fcffe5b5668b4905a8e6cdb70d89f4b1b"
+var a string = "a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d"
+var a_pub = "0ceaa63dedd87d2da05ff0bdfbd99b5734911269c70664b9a74e04ae5cdbeca7"
+var M1 string = "4b4e638bf08526e4229fd079675fedfd329b97ef"
+var K string = "9a689113a76b44583e73f9662eb172e830886ed988f04c6c0030f0e93c68784de27dbf30c5d151fb"
+var aes_key string = "a043357cee40a9ae0731dd50859cccfb"
+var aes_iv string = "da36ea69a94d51d881086e9080dbaef8"
+var epk string = "5de0f61622b0d41bc098b07f229863f49e1a1c1030908b0ec620386e089a20c4"
+var tag string = "3b13d2e85f00555c6a05df5cb03a2105"
 
-// const m1Expected string = "4b4e638bf08526e4229fd079675fedfd329b97ef"
-// const xAExpected string = "47662731cbe1ba0b130dc5e65320dc2a4b60371e086212a7a55ed4a3653b2d1e861569309c97b4f88433564bd47f6de13ecc440db26998478b266eaa8195a81c28f89a989bc538c477be302fd96bb3fa809e9a94b0aac28d6a00aa057892ba26b2b2cad4d8ec6a9e4207754926c985c393feb6e8b7fb82bd8043709866d7b53a592a940d8e44a7d08fbbda51bf5c9091c251988236147364cb75ad5a4efbeed242fd78496f0cda365965255c8214bd264c259fa2f2a8bfec70eecb32d2ded4c5c35e5e802a22bf58f7cd629fb2f3b4a2498b95f63eab37be9fb0f75c3fcbea8c083d0311302ebc2c3bc0a0525ba5bf3fcffe5b5668b4905a8e6cdb70d89f4b1b"
-// const ID string = "366B4165DD64AD3A"
-// const testPK string = "4223ddb35967419ddfece40d6b552b797140129c1c262da1b83d413a7f9674aff834171336dabadf9faa95962331e44838d5f66c46649d583ee44827755651215dcd5881056f7fd7d6445b844ccc5793cc3bbd5887029a5abef8b173a3ad8f81326435e9d49818275734ef483b2541f4e2b99b838164ad5fe4a7cae40599fa41bd0e72cb5495bdd5189805da44b7df9b7ed29af326bb526725c2b1f4115f9d91e41638876eeb1db26ef6aed5373f72e3907cc72997ee9132a0dcafda24115730c9db904acbed6d81dc4b02200a5f5281bf321d5a3216a709191ce6ad36d383e79be76e37a2ed7082007c51717e099e7bedd7387c3f82a916d6aca2eb2b6ff3f3"
-// const testSalt string = "d62c98fe76c77ad445828c33063fc36f"
 const charset string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 type AirPlayAuth struct {
+}
+
+type PairSetupPin1Response struct {
+	Pk   []byte
+	Salt []byte
+}
+type PairSetupPin2Response struct {
+	Proof []byte
+}
+
+type PairSetupPin3Response struct {
+	Epk     []byte
+	AuthTag []byte
 }
 
 type PrivateKey struct {
@@ -59,31 +74,19 @@ type Dict struct {
 	Key   string   `xml:"key"`
 	Array []string `xml:"array>string"`
 }
-type PairSetupPin1Response struct {
-	Pk   []byte
-	Salt []byte
-}
-type PairSetupPin2Response struct {
-	Proof []byte
-}
-
-type PairSetupPin3Response struct {
-	Epk     []byte
-	AuthTag []byte
-}
 
 func (a AirPlayAuth) NewAirPlayAuth(address string, authToken string) error {
 	addr = address
 	authTokenSplit := strings.Split(authToken, "@")
 	clientId = authTokenSplit[0]
-	authKeyBytes, err := hex.DecodeString(authTokenSplit[1])
+	key, err := hex.DecodeString(authTokenSplit[1])
 	if err != nil {
-		return err
+		panic(err)
 	}
-	copy(authKey[:], authKeyBytes)
-	fmt.Println("clientId:", clientId)
-	fmt.Println("authKey:", authKeyBytes)
-	//authKey = ed25519.NewKeyFromSeed(authKey)
+	authKey = ed25519.PrivateKey(key)
+	//copy(authKey[:], authKeyBytes)
+	//fmt.Println("clientId:", clientId)
+	//fmt.Println("authKey:", authKeyBytes)
 	return nil
 }
 
@@ -300,17 +303,20 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 		if err != nil {
 			panic(err)
 		}
-		srp, err := go_apple_srp.NewWithHash(crypto.SHA1, 2048)
+		srp, err := srp.New()
 		if err != nil {
 			panic(err)
 		}
-		c, err := srp.NewClient([]byte(clientId), []byte(pin))
+		c, err := srp.NewClient([]byte(clientId), []byte(pin), authKey)
 		if err != nil {
 			panic(err)
 		}
 		creds := c.Credentials()
 		splittedCreds := strings.Split(creds, ":")
 		xA := splittedCreds[1]
+		if xA == A {
+			fmt.Println("A matches")
+		}
 		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
 		auth, err := c.Generate(server_creds)
 		if err != nil {
@@ -325,12 +331,21 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 			panic(err)
 		}
 		pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
-		fmt.Println(len(pairSetupPin2Response.Proof))
+		if err != nil {
+			panic(err)
+		}
 		proof := hex.EncodeToString(pairSetupPin2Response.Proof)
 		if !c.ServerOk(proof) {
 			panic("authentication failed")
+		} else {
+			fmt.Println("Proof matches")
 		}
-		fmt.Println(pairSetupPin2Response)
+		pairSetupPin3Response, err := a.doPairSetupPin3(socket, c.RawKey())
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(pairSetupPin3Response.AuthTag)
+		fmt.Println(pairSetupPin3Response.Epk)
 		return socket, err
 	} else {
 		fmt.Println("not all neccessary features are enabled on AirServer")
@@ -362,31 +377,31 @@ func aesCtr128Encrypt(key []byte, counter []byte, data []byte) []byte {
 	return ciphertext
 }
 
-func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (*PairSetupPin1Response, error) {
+func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (PairSetupPin1Response, error) {
 	pairSetupPinRequestData, err := createPListStep1(map[string]string{
 		"method": "pin",
 		"user":   clientId,
 	})
 	if err != nil {
-		return nil, err
+		return PairSetupPin1Response{}, err
 	}
 	data, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
 	if err != nil {
-		return nil, err
+		return PairSetupPin1Response{}, err
 	}
 	pairSetupPin1Response, err := Parse(data)
 	//fmt.Println(hex.EncodeToString(pairSetupPin1Response["pk"].([]byte)))
 	if err != nil {
-		return nil, err
+		return PairSetupPin1Response{}, err
 	}
 	if _, okPk := pairSetupPin1Response["pk"]; okPk {
 		if _, okSalt := pairSetupPin1Response["salt"]; okSalt {
 			pkBytes := pairSetupPin1Response["pk"].([]byte)
 			saltBytes := pairSetupPin1Response["salt"].([]byte)
-			return &PairSetupPin1Response{Pk: pkBytes, Salt: saltBytes}, nil
+			return PairSetupPin1Response{Pk: pkBytes, Salt: saltBytes}, nil
 		}
 	}
-	return nil, fmt.Errorf("missing 'pk' and/or 'salt' keys in response")
+	return PairSetupPin1Response{}, fmt.Errorf("missing 'pk' and/or 'salt' keys in response")
 }
 
 func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte, clientEvidenceMessageM1 []byte) (PairSetupPin2Response, error) {
@@ -404,14 +419,6 @@ func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte,
 	pairSetupPin2Response, err := Parse(pairSetupPin2ResponseBytes)
 	if err != nil {
 		return PairSetupPin2Response{}, err
-	}
-	plist, err := plist.Marshal(pairSetupPin2Response)
-	if err != nil {
-		return PairSetupPin2Response{}, err
-	}
-	err1 := ioutil.WriteFile("proof.plist",plist, 0644)
-	if err1 != nil {
-		panic(err1)
 	}
 	if _, ok := pairSetupPin2Response["proof"]; !ok {
 		return PairSetupPin2Response{}, fmt.Errorf("missing proof key in response")
@@ -438,6 +445,12 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 			break
 		}
 	}
+	if hex.EncodeToString(aesIV) == aes_iv {
+		fmt.Println("aes_iv matches")
+	}
+	if hex.EncodeToString(aesKey) == aes_key {
+		fmt.Println("aes_key matches")
+	}
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return PairSetupPin3Response{}, err
@@ -446,7 +459,12 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 	if err != nil {
 		return PairSetupPin3Response{}, err
 	}
-	aesGcm128ClientLTPK := aesGcm.Seal(nil, aesIV, authKey, nil)
+	nonce := make([]byte, 12)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return PairSetupPin3Response{}, err
+	}
+	pub := authKey.Public().(ed25519.PublicKey)
+	aesGcm128ClientLTPK := aesGcm.Seal(nil, aesIV, pub, nil)
 	requestData := make(map[string][]byte)
 	requestData["epk"] = aesGcm128ClientLTPK[:len(aesGcm128ClientLTPK)-16]
 	requestData["authTag"] = aesGcm128ClientLTPK[len(aesGcm128ClientLTPK)-16:]
@@ -465,7 +483,7 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 	if _, ok := pairSetupPin3Response["epk"]; !ok {
 		return PairSetupPin3Response{}, fmt.Errorf("missing epk key in response")
 	}
-	epkV, ok := pairSetupPin3Response["eok"].([]byte)
+	epkV, ok := pairSetupPin3Response["epk"].([]byte)
 	if !ok {
 		return PairSetupPin3Response{}, fmt.Errorf("epk key in response is not of type []byte")
 	}

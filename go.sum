@@ -1,5 +1,9 @@
 github.com/AlexMax/charon v0.0.0-20160317025938-25b80c2eeae1 h1:54OPy0V3ORlCMdqbKhUMaaZDghcqlUD5drRNjgu5eXc=
 github.com/AlexMax/charon v0.0.0-20160317025938-25b80c2eeae1/go.mod h1:EQJ5dUBZs+H9C3k+xnX6yLIBiYzYwmqtziZS1dUQWvU=
+github.com/arag0re/go-apple-srp6 v0.0.0-20230106165704-da5cd32b30e0 h1:IWIjyLdsNevuoy2QyIk+3/V5puONBm6Mdae0vY7yVRM=
+github.com/arag0re/go-apple-srp6 v0.0.0-20230106165704-da5cd32b30e0/go.mod h1:x+JbsaNDltTKzKamfHvlEZ3VaFaD4ZD3ybgkTR71U+w=
+github.com/arag0re/go-apple-srp6 v0.0.0-20230106182410-d18dbb54e870 h1:Xywg0Yk7vgaxHaKz86iTryEUw+pnyxrwJhh2uq13Tv0=
+github.com/arag0re/go-apple-srp6 v0.0.0-20230106182410-d18dbb54e870/go.mod h1:x+JbsaNDltTKzKamfHvlEZ3VaFaD4ZD3ybgkTR71U+w=
 github.com/brutella/dnssd v1.2.1/go.mod h1:FpJqlQ8+XU6w1vbnG1zJiQPTRE5fvQIRdrcBojMVuuQ=
 github.com/brutella/hc v1.2.5 h1:P1tHqJtrGngob6Lv5E7RVGlLcdo54X/03Gseo5+soVw=
 github.com/brutella/hc v1.2.5/go.mod h1:kluioDmG4z8OweN0boeTf08696sH8odlhPDdq3gwuZw=

@@ -1,8 +1,7 @@
-// srp.go - golang implementation of SRP-6a
+// srp.go - golang implementation of SRP-6a like apple wants it
 //
-// Copyright 2013-2017 Sudhi Herle <sudhi.herle-at-gmail-dot-com>
+// Copyright 2013-2023 arag0re <arag0re.eth-at-protonmail-dot-com>
 // License: MIT
-//
 
 // Package srp implements SRP-6a per [1]. It uses the standard library
 // and the golang extended library and nothing else.
@@ -15,26 +14,22 @@
 // validate that the server also has the same value, it requires the server to send
 // its own proof. In the SRP paper [1], the authors use:
 //
-//	M = H(H(N) xor H(g), H(I), s, A, B, K)
-//	M' = H(A, M, K)
-//
-// We use a simpler construction:
-//
-//	M = H(K, A, B, I, s, N, g)
-//	M' = H(M, K)
+//	M1 = H(H(N) xor H(g), H(I), s, A, B, K)
+//	M2 = H(A, M, K)
 //
 // In this implementation:
 //
-//	H  = BLAKE2()
-//	k  = H(N, g)
-//	x  = H(s, I, P)
-//	I  = anonymized form of user identity (BLAKE2 of value sent by client)
-//	P  = hashed password (expands short passwords)
+//		H  = SHA1()
+//		k  = H(N | g)
+//	 t  = H(I | ':' |P)
+//		x  = H(s | t)
+//		I  = clear text
+//		P  = clear text
 //
 // Per RFC-5054, we adopt the following padding convention:
 //
-//	k = H(N, pad(g))
-//	u = H(pad(A), pad(B))
+//	k = H(PAD(N) | PAD(g))
+//	u = H(PAD(A) | PAD(B))
 //
 // References:
 //
@@ -49,16 +44,17 @@ package srp
 //   N    A large safe prime (N = 2q+1, where q is prime)
 //        All arithmetic is done modulo N.
 //   g    A generator modulo N
-//   k    Multiplier parameter (k = H(N, g) in SRP-6a, k = 3 for legacy SRP-6)
+//   k    Multiplier parameter 			(k = H(PAD(N) | PAD(g)) in SRP-6a, k = 3 for legacy SRP-6)
 //   s    User's salt
-//   I    Username
+//   I    Cleartext Username
 //   p    Cleartext Password
-//   H()  One-way hash function
+//   t	  auth pair 					(t = H(I | ':' | p))
+//   H()  One-way hash function, in this case SHA1
 //   ^    (Modular) Exponentiation
-//   u    Random scrambling parameter
+//   u    Random scrambling parameter  	(u = H(PAD(A) | PAD(B)))
 //   a,b  Secret ephemeral values
 //   A,B  Public ephemeral values
-//   x    Private key (derived from p and s)
+//   x    Private key 					(x  = H(s | t))
 //   v    Password verifier
 //
 // The host stores passwords using the following formula:
@@ -66,8 +62,8 @@ package srp
 //   s = randomsalt()          (same length as N)
 //   I = H(I)
 //   p = H(p)                  (hash/expand I & p)
-//   t = H(I, ":", p)
-//   x = H(s, t)
+//   t = H(I | ":" | p)
+//   x = H(s | t)
 //   v = g^x                   (computes password verifier)
 //
 // The host then keeps {I, s, v} in its password database.
@@ -111,8 +107,8 @@ package srp
 // validate that the server also has the same value, it requires the server to send
 // its own proof. We use a simpler construction:
 //
-//     M = H(K, A, B, I, s, N, g)
-//     M' = H(M, K)
+//	M1 = H(H(N) xor H(g), H(I), s, A, B, K)
+//	M2 = H(A, M, K)
 //
 // Client & Server also employ the following safeguards:
 //
@@ -132,14 +128,11 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
-
-	// stdlib has an enum for Blake2b_256; this lib registers itself against it.
-	_ "golang.org/x/crypto/blake2b"
 )
 
 // SRP represents an environment for the client and server to share certain properties;
 // notably the hash function and prime-field size.  The default hash function is
-// Blake2b-256. Any valid hash function as documented in "crypto" can be used.
+// SHA1. Any valid hash function as documented in "crypto" can be used.
 // There are two ways for creating an SRP environment:
 //
 //	New()
@@ -154,16 +147,15 @@ func (s *SRP) FieldSize() int {
 	return s.pf.n * 8
 }
 
-// New creates a new SRP environment using a 'bits' sized prime-field for
-// use by SRP clients and Servers.The default hash function is Blake-2b-256.
-func New(bits int) (*SRP, error) {
-	return NewWithHash(crypto.BLAKE2b_256, bits)
+// New creates a new SRP environment 2048 bits
+// use by SRP clients and Servers.The default hash function is SHA1.
+func New() (*SRP, error) {
+	return NewWithHash(crypto.SHA1, 2048)
 }
 
 // NewWithHash creates a new SRP environment using the hash function 'h' and
 // 'bits' sized prime-field size.
 func NewWithHash(h crypto.Hash, bits int) (*SRP, error) {
-
 	pf, err := findPrimeField(bits)
 	if err != nil {
 		return nil, err
@@ -338,23 +330,24 @@ type Client struct {
 	a  *big.Int
 	xA *big.Int
 	k  *big.Int
+	S  *big.Int
 
 	xK []byte
 	xM []byte
 }
 
 // NewClient constructs an SRP client instance.
-func (s *SRP) NewClient(I, p []byte) (*Client, error) {
+func (s *SRP) NewClient(I, p, a []byte) (*Client, error) {
 	//a, err := hex.DecodeString("a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d")
-	//if err != nil {
-	//	print(err)
+	//if err  != nil {
+	//	panic(err)
 	//}
 	pf := s.pf
 	c := &Client{
 		s: s,
 		i: I,
 		p: p,
-		a:randBigInt(pf.n * 8) /*new(big.Int).SetBytes(a)*/,
+		a: /*randBigInt(pf.n * 8)*/ big.NewInt(0).SetBytes(a),
 		k: s.hashint(pad(pf.N, pf.n), pad(pf.g, pf.n)),
 	}
 
@@ -404,39 +397,28 @@ func (c *Client) Generate(srv string) (string, error) {
 	if u.Cmp(zero) == 0 {
 		return "", fmt.Errorf("srp: invalid server public key")
 	}
-	auth := c.s.hashbyte(c.i, []byte{':'}, c.p)
-	x := c.s.hashint(salt, auth)
-	S := computeSessionKey(pf.N, pf.g, c.k, x, u, c.a, B)
-	K1 := c.s.hashbyte(append(S.Bytes(), []byte{0, 0, 0, 0}...))
-	K2 := c.s.hashbyte(append(S.Bytes(), []byte{0, 0, 0, 1}...))
-	c.xK = append(K1, K2...)
-	//expectedK := "9a689113a76b44583e73f9662eb172e830886ed988f04c6c0030f0e93c68784de27dbf30c5d151fb"
-	//strK := hex.EncodeToString(c.xK)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//if strK == expectedK {
-	//	fmt.Println("K matches expectated result")
-	//} else {
-	//	fmt.Println("K not matching expectation")
-	//	fmt.Println(strK)
-	//}
-	hN := c.s.hashbyte(pf.N.Bytes())
-	hg := c.s.hashbyte(pf.g.Bytes())
-	hNhg := xor(hN, hg)
-	hu := c.s.hashbyte(c.i)
-	c.xM = c.s.hashbyte(hNhg, hu, salt, c.xA.Bytes(), B.Bytes(), c.xK)
-	fmt.Println(len(c.xM))
+	t := c.s.hashbyte(c.i, []byte{':'}, c.p)                           // t = H(I | ":" | p)
+	x := c.s.hashint(salt, t)                                          // x = H(s | t)
+	c.S = computeSessionKey(pf.N, pf.g, c.k, x, u, c.a, B)             // S =
+	K1 := c.s.hashbyte(c.S.Bytes(), []byte{0, 0, 0, 0})                // creates first half of K (K1)
+	K2 := c.s.hashbyte(c.S.Bytes(), []byte{0, 0, 0, 1})                // creates second half of K (K2)
+	c.xK = append(K1, K2...)                                           // K = H(S | \x00\x00\x00\x00) | H(S | \x00\x00\x00\x01)
+	hN := c.s.hashbyte(pf.N.Bytes())                                   // hN = H(N)
+	hg := c.s.hashbyte(pf.g.Bytes())                                   // hg = H(g)
+	hNhg := xor(hN, hg)                                                // hNhg = hN ^ hg
+	hu := c.s.hashbyte(c.i)                                            // hu = H(I)
+	c.xM = c.s.hashbyte(hNhg, hu, salt, c.xA.Bytes(), B.Bytes(), c.xK) // M1 = H(hNhg | hu | A | B | K)
+	//fmt.Println(len(c.xM))
 
 	return hex.EncodeToString(c.xM), nil
 }
 
 func xor(b1, b2 []byte) []byte {
-    result := make([]byte, len(b1))
-    for i, _ := range b1 {
-        result[i] = b1[i] ^ b2[i]
-    }
-    return result
+	result := make([]byte, len(b1))
+	for i, _ := range b1 {
+		result[i] = b1[i] ^ b2[i]
+	}
+	return result
 }
 
 func computeSessionKey(N, g, k, x, u, a, B *big.Int) *big.Int {
@@ -452,9 +434,8 @@ func computeSessionKey(N, g, k, x, u, a, B *big.Int) *big.Int {
 // ServerOk takes a 'proof' offered by the server and verifies that it is valid.
 // i.e., we should compute the same hash() on M that the server did.
 func (c *Client) ServerOk(proof string) bool {
-	h := c.s.hashbyte(c.xK, c.xM)
+	h := c.s.hashbyte(c.xA.Bytes(), c.xM, c.xK) // H(A | M1 | K)
 	myh := hex.EncodeToString(h)
-
 	return subtle.ConstantTimeCompare([]byte(myh), []byte(proof)) == 1
 }
 

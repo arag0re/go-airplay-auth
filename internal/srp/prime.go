@@ -1,6 +1,6 @@
 // prime.go - Generate safe primes
 //
-// Copyright 2013-2017 Sudhi Herle <sudhi.herle-at-gmail-dot-com>
+// Copyright 2013-2023 arag0re <arag0re.eth-at-protonmail-dot-com>
 // License: MIT
 package srp
 
@@ -34,9 +34,10 @@ func safePrime(bits int) (*big.Int, error) {
 // Return true if g is a generator for safe prime p
 //
 // From Cryptography Theory & Practive, Stinson and Paterson (Th. 6.8 pp 196):
-//   If p > 2 is a prime and g is in Zp*, then
-//   g is a primitive element modulo p iff g ^ (p-1)/q != 1 (mod p)
-//   for all primes q such that q divides (p-1).
+//
+//	If p > 2 is a prime and g is in Zp*, then
+//	g is a primitive element modulo p iff g ^ (p-1)/q != 1 (mod p)
+//	for all primes q such that q divides (p-1).
 //
 // "Primitive Element" and "Generator" are the same thing in Number Theory.
 //

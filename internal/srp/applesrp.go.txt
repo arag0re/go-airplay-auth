@@ -1,0 +1,63 @@
+package applesrp
+
+import (
+	"encoding/hex"
+	"strings"
+
+	srp "github.com/arag0re/go-apple-srp6"
+)
+
+type applesrp struct {
+	client *srp.Client
+	A      []byte
+	M1     []byte
+	K		[]byte
+}
+
+func NewAppleSRP(clientId string, pin string) applesrp {
+	srp, err := srp.New()
+	if err != nil {
+		return applesrp{}
+	}
+	c, err := srp.NewClient([]byte(clientId), []byte(pin))
+	if err != nil {
+		return applesrp{}
+	}
+	return applesrp{
+		client: c,
+	}
+}
+
+func Step1(clientId string, pin string) (applesrp, error) {
+	asrp := NewAppleSRP(clientId, pin)
+	creds := asrp.client.Credentials()
+	splittedCreds := strings.Split(creds, ":")
+	xA := splittedCreds[1]
+	xABytes, err := hex.DecodeString(xA)
+	if err != nil {
+		return applesrp{}, err
+	}
+	asrp.A = xABytes
+	return asrp, nil
+}
+
+func Step2(asrp applesrp ,salt []byte, pk []byte) error {
+	server_creds := hex.EncodeToString(salt) + ":" + hex.EncodeToString(pk)
+	auth, err := asrp.client.Generate(server_creds)
+	if err != nil {
+		return err
+	}
+	m1Bytes, err := hex.DecodeString(auth)
+	if err != nil {
+		return err
+	}
+	asrp.K = asrp.client.RawKey()
+	asrp.M1 = m1Bytes
+	return nil
+}
+
+func (a applesrp) Setp3(pairSetupPin2Response PairSetupPin2Response) {
+	if !a.client.ServerOk(hex.EncodeToString(pairSetupPin2Response.Proof)) {
+		panic("proof verification failed")
+	}
+}

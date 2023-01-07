@@ -1,0 +1,14 @@
+package applesrp
+
+type PairSetupPin1Response struct {
+	Pk   []byte
+	Salt []byte
+}
+type PairSetupPin2Response struct {
+	Proof []byte
+}
+
+type PairSetupPin3Response struct {
+	Epk     []byte
+	AuthTag []byte
+}
