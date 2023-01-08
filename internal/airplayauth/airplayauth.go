@@ -3,6 +3,7 @@ package airplayauth
 import (
 	"bufio"
 	"bytes"
+	_ "crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
@@ -16,12 +17,15 @@ import (
 	"io"
 	"io/ioutil"
 	"main/internal/srp"
-	"math"
+	_ "math"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"unsafe"
+	_ "unsafe"
 
+	_ "github.com/brutella/hc/crypto/curve25519"
 	"github.com/brutella/hc/log"
 	"github.com/groob/plist"
 	"golang.org/x/crypto/curve25519"
@@ -31,18 +35,6 @@ import (
 var clientId = ""
 var authKey ed25519.PrivateKey
 var addr string
-var ID string = "366B4165DD64AD3A"
-var pk string = "4223ddb35967419ddfece40d6b552b797140129c1c262da1b83d413a7f9674aff834171336dabadf9faa95962331e44838d5f66c46649d583ee44827755651215dcd5881056f7fd7d6445b844ccc5793cc3bbd5887029a5abef8b173a3ad8f81326435e9d49818275734ef483b2541f4e2b99b838164ad5fe4a7cae40599fa41bd0e72cb5495bdd5189805da44b7df9b7ed29af326bb526725c2b1f4115f9d91e41638876eeb1db26ef6aed5373f72e3907cc72997ee9132a0dcafda24115730c9db904acbed6d81dc4b02200a5f5281bf321d5a3216a709191ce6ad36d383e79be76e37a2ed7082007c51717e099e7bedd7387c3f82a916d6aca2eb2b6ff3f3"
-var salt string = "d62c98fe76c77ad445828c33063fc36f"
-var A string = "47662731cbe1ba0b130dc5e65320dc2a4b60371e086212a7a55ed4a3653b2d1e861569309c97b4f88433564bd47f6de13ecc440db26998478b266eaa8195a81c28f89a989bc538c477be302fd96bb3fa809e9a94b0aac28d6a00aa057892ba26b2b2cad4d8ec6a9e4207754926c985c393feb6e8b7fb82bd8043709866d7b53a592a940d8e44a7d08fbbda51bf5c9091c251988236147364cb75ad5a4efbeed242fd78496f0cda365965255c8214bd264c259fa2f2a8bfec70eecb32d2ded4c5c35e5e802a22bf58f7cd629fb2f3b4a2498b95f63eab37be9fb0f75c3fcbea8c083d0311302ebc2c3bc0a0525ba5bf3fcffe5b5668b4905a8e6cdb70d89f4b1b"
-var a string = "a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d"
-var a_pub = "0ceaa63dedd87d2da05ff0bdfbd99b5734911269c70664b9a74e04ae5cdbeca7"
-var M1 string = "4b4e638bf08526e4229fd079675fedfd329b97ef"
-var K string = "9a689113a76b44583e73f9662eb172e830886ed988f04c6c0030f0e93c68784de27dbf30c5d151fb"
-var aes_key string = "a043357cee40a9ae0731dd50859cccfb"
-var aes_iv string = "da36ea69a94d51d881086e9080dbaef8"
-var epk string = "5de0f61622b0d41bc098b07f229863f49e1a1c1030908b0ec620386e089a20c4"
-var tag string = "3b13d2e85f00555c6a05df5cb03a2105"
 
 const charset string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -77,6 +69,7 @@ type Dict struct {
 
 func (a AirPlayAuth) NewAirPlayAuth(address string, authToken string) error {
 	addr = address
+	//authToken := GenerateNewAuthToken()
 	authTokenSplit := strings.Split(authToken, "@")
 	clientId = authTokenSplit[0]
 	key, err := hex.DecodeString(authTokenSplit[1])
@@ -118,7 +111,7 @@ func createPListStep2(data map[string][]byte) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func generateNewAuthToken() string {
+func GenerateNewAuthToken() string {
 	clientID := randomString(16)
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -255,30 +248,31 @@ func randomString(length int) string {
 	return string(s)
 }
 
-func (a AirPlayAuth) Auth(socket net.Conn) net.Conn {
+func (a AirPlayAuth) Auth(socket net.Conn) (net.Conn, error) {
 	randomPrivateKey := make([]byte, 32)
 	_, err := rand.Read(randomPrivateKey)
 	if err != nil {
 		fmt.Println("Error generating random bytes:", err)
+		return nil, err
 	}
 	randomPublicKey := make([]byte, 32)
 	_, err1 := rand.Read(randomPublicKey)
 	if err1 != nil {
 		fmt.Println("Error generating random bytes:", err)
+		return nil, err
 	}
-	pairVerify1Response, err := a.doPairVerify1(socket, randomPublicKey, authKey)
+
+	//randomPublic := *(*[32]byte)(unsafe.Pointer(&randomPublicKey[0]))
+	//randomPrivate := *(*[32]byte)(unsafe.Pointer(&randomPrivateKey[0]))
+	////secret := curve25519.SharedSecret(randomPrivate, randomPublic)
+	pairVerify1Response, err := a.doPairVerify1(socket, randomPublicKey)
 	if err != nil {
 		fmt.Println("Error generating random bytes:", err)
+		return nil, err
 	}
-	pub, err := parsePublicKey(randomPublicKey)
-	if err != nil {
-		fmt.Println("Error parsing key: ", err)
-	}
-	privateKey := x25519.PrivateKey{}
-	privateKey.SetBytes(randomPrivateKey)
-	a.doPairVerify2(socket, pairVerify1Response, &privateKey, &pub)
+	a.doPairVerify2(socket, pairVerify1Response, randomPrivateKey, randomPublicKey)
 	println("Pair Verify finished!")
-	return socket
+	return socket, nil
 }
 
 func (a AirPlayAuth) StartPairing(addr string) {
@@ -295,62 +289,59 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	if err != nil {
 		log.Info.Panic(err)
 	}
-	featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
-	check := a.checkForFeatures(socket, featuresToCheck)
-	if check {
-		fmt.Println("neccessary features are enabled on AirServer")
-		pairSetupPin1Response, err := a.doPairSetupPin1(socket)
-		if err != nil {
-			panic(err)
-		}
-		srp, err := srp.New()
-		if err != nil {
-			panic(err)
-		}
-		c, err := srp.NewClient([]byte(clientId), []byte(pin), authKey)
-		if err != nil {
-			panic(err)
-		}
-		creds := c.Credentials()
-		splittedCreds := strings.Split(creds, ":")
-		xA := splittedCreds[1]
-		if xA == A {
-			fmt.Println("A matches")
-		}
-		server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
-		auth, err := c.Generate(server_creds)
-		if err != nil {
-			panic(err)
-		}
-		xABytes, err := hex.DecodeString(xA)
-		if err != nil {
-			panic(err)
-		}
-		m1Bytes, err := hex.DecodeString(auth)
-		if err != nil {
-			panic(err)
-		}
-		pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
-		if err != nil {
-			panic(err)
-		}
-		proof := hex.EncodeToString(pairSetupPin2Response.Proof)
-		if !c.ServerOk(proof) {
-			panic("authentication failed")
-		} else {
-			fmt.Println("Proof matches")
-		}
-		pairSetupPin3Response, err := a.doPairSetupPin3(socket, c.RawKey())
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println(pairSetupPin3Response.AuthTag)
-		fmt.Println(pairSetupPin3Response.Epk)
-		return socket, err
-	} else {
-		fmt.Println("not all neccessary features are enabled on AirServer")
-		return nil, err
+	//featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
+	//check := a.checkForFeatures(socket, featuresToCheck)
+	//if check {
+	fmt.Println("neccessary features are enabled on AirServer")
+	pairSetupPin1Response, err := a.doPairSetupPin1(socket)
+	if err != nil {
+		panic(err)
 	}
+	srp, err := srp.New()
+	if err != nil {
+		panic(err)
+	}
+	c, err := srp.NewClient([]byte(clientId), []byte(pin), authKey)
+	if err != nil {
+		panic(err)
+	}
+	creds := c.Credentials()
+	splittedCreds := strings.Split(creds, ":")
+	xA := splittedCreds[1]
+	server_creds := hex.EncodeToString(pairSetupPin1Response.Salt) + ":" + hex.EncodeToString(pairSetupPin1Response.Pk)
+	auth, err := c.Generate(server_creds)
+	if err != nil {
+		panic(err)
+	}
+	xABytes, err := hex.DecodeString(xA)
+	if err != nil {
+		panic(err)
+	}
+	m1Bytes, err := hex.DecodeString(auth)
+	if err != nil {
+		panic(err)
+	}
+	pairSetupPin2Response, err := a.doPairSetupPin2(socket, xABytes, m1Bytes)
+	if err != nil {
+		panic(err)
+	}
+	proof := hex.EncodeToString(pairSetupPin2Response.Proof)
+	if !c.ServerOk(proof) {
+		panic("authentication failed")
+	} else {
+		fmt.Println("Proof matches")
+	}
+	pairSetupPin3Response, err := a.doPairSetupPin3(socket, c.RawKey())
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(pairSetupPin3Response.AuthTag)
+	fmt.Println(pairSetupPin3Response.Epk)
+	return socket, err
+	//} else {
+	//	fmt.Println("not all neccessary features are enabled on AirServer")
+	//	return nil, err
+	//}
 }
 
 func parsePublicKey(key []byte) (x25519.PublicKey, error) {
@@ -359,9 +350,10 @@ func parsePublicKey(key []byte) (x25519.PublicKey, error) {
 	return pub, nil
 }
 
-func getSharedKey(privKey *x25519.PrivateKey, pubKey *x25519.PublicKey) ([]byte, error) {
-	sharedSecret := privKey.Shared(pubKey)
-	return sharedSecret, nil
+func SharedSecret(privateKey, otherPublicKey [32]byte) [32]byte {
+	var k [32]byte
+	curve25519.ScalarMult(&k, &privateKey, &otherPublicKey)
+	return k
 }
 
 func aesCtr128Encrypt(key []byte, counter []byte, data []byte) []byte {
@@ -445,22 +437,12 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 			break
 		}
 	}
-	if hex.EncodeToString(aesIV) == aes_iv {
-		fmt.Println("aes_iv matches")
-	}
-	if hex.EncodeToString(aesKey) == aes_key {
-		fmt.Println("aes_key matches")
-	}
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return PairSetupPin3Response{}, err
 	}
 	aesGcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return PairSetupPin3Response{}, err
-	}
-	nonce := make([]byte, 12)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return PairSetupPin3Response{}, err
 	}
 	pub := authKey.Public().(ed25519.PublicKey)
@@ -472,7 +454,7 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 	if err != nil {
 		return PairSetupPin3Response{}, err
 	}
-	pairSetupPin3ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/octet-stream", pairSetupPinRequestData)
+	pairSetupPin3ResponseBytes, err := a.post(socket, "/pair-setup-pin", "application/x-apple-binary-plist", pairSetupPinRequestData)
 	if err != nil {
 		return PairSetupPin3Response{}, err
 	}
@@ -497,29 +479,41 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 	return PairSetupPin3Response{Epk: epkV, AuthTag: authTagV}, err
 }
 
-func (a AirPlayAuth) doPairVerify1(socket net.Conn, public []byte, targetPublic []byte) ([]byte, error) {
-	flag := []byte{64, 64, 64, 64}
+func (a AirPlayAuth) doPairVerify1(socket net.Conn, public []byte) ([]byte, error) {
+	flag := []byte{1, 0, 0, 0}
+	targetPub := authKey.Public().(ed25519.PublicKey)
 	data := append(flag, public...)
-	data1 := append(data, targetPublic...)
+	data1 := append(data, targetPub...)
 	resp, err := a.post(socket, "/pair-verify", "application/octet-stream", data1)
 	return resp, err
 }
 
-func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, private *x25519.PrivateKey, public *x25519.PublicKey) error {
-	targetPubKey := pairVerify1Response[:32]
-	targetPub, err := parsePublicKey(targetPubKey)
+func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, private ed25519.PrivateKey, public ed25519.PublicKey) error {
+	targetPubKey, err := hex.DecodeString("d62c8c9548d836736978ad4d426df3495192407bbbb9466c9970794cdd2fe43a") //:= make([]byte, len(pairVerify1Response[32:]))
 	if err != nil {
-		fmt.Println(err)
-		return err
+		fmt.Println("error decoding string")
 	}
-	sharedSecret, err := getSharedKey(private, &targetPub)
+	//copy(targetPubKey, pairVerify1Response[32:])
+	//privateKey := *(*[32]byte)(unsafe.Pointer(&private[0]))
+	targetPK := *(*[32]byte)(unsafe.Pointer(&targetPubKey[0]))
+	var secret string = "b7085ca45bd640d966525cbdbc0745bd1d80aa6e6ee48270b60affba3cccac31"
+	sharedSecret, err := hex.DecodeString("b7085ca45bd640d966525cbdbc0745bd1d80aa6e6ee48270b60affba3cccac31") // SharedSecret(privateKey, targetPK)
 	if err != nil {
-		fmt.Println(err)
-		return err
+		fmt.Println("error decoding string")
 	}
-	ed25519priv := ed25519.NewKeyFromSeed(private.Bytes())
-	edPub := ed25519priv.Public().(ed25519.PublicKey)
-	curve25519.X25519(private.Bytes(), targetPubKey)
+	priv, err := hex.DecodeString("a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d")
+	if err != nil {
+		fmt.Println("error decoding string")
+	}
+	edPub, err := hex.DecodeString("0ceaa63dedd87d2da05ff0bdfbd99b5734911269c70664b9a74e04ae5cdbeca7")
+	if err != nil {
+		fmt.Println("error decoding string")
+	}
+	privK := *(*[32]byte)(unsafe.Pointer(&priv[0]))
+	sharedS := SharedSecret(privK, targetPK)
+	if hex.EncodeToString(sharedS[:]) == secret {
+		fmt.Println("shared Secret Matches")
+	}
 	h := sha512.New()
 	h.Write([]byte("Pair-Verify-AES-Key"))
 	h.Write(sharedSecret)
@@ -528,13 +522,40 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	h.Write([]byte("Pair-Verify-AES-IV"))
 	h.Write(sharedSecret)
 	sharedSecretSha512AesIV := h.Sum(nil)[:16]
-	data := ed25519.Sign(ed25519priv, append(public.Bytes(), targetPubKey...))
-	if !ed25519.Verify(edPub, append(public.Bytes(), targetPubKey...), data) {
+	if hex.EncodeToString(sharedSecretSha512AesIV) == "453404da307f780e6d50e52d7dc62325" {
+		fmt.Println("IV matches")
+	}
+	if hex.EncodeToString(sharedSecretSha512AesKey) == "2556d9ef1780c8283eecf259fc7207af" {
+		fmt.Println("Key matches")
+	}
+	toSign := append(edPub, targetPubKey...)
+	priv, err = hex.DecodeString("a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d")
+	if err != nil {
+		fmt.Println("error decoding string")
+	}
+	//privateK := ed25519.PrivateKey(priv)
+	signature, err := ED25519Signature(priv, toSign)
+	if hex.EncodeToString(signature) == "82a0cf6cdba66df407fdeb51ac3884748e3a47c8de3f681d534299e707428ce19f6822d2bf925c5d197f1042e7c5b7160a764e42f9fbe33ce57b3704821cff0d" {
+		fmt.Println("Signature matches")
+	}
+	sign, err := hex.DecodeString("82a0cf6cdba66df407fdeb51ac3884748e3a47c8de3f681d534299e707428ce19f6822d2bf925c5d197f1042e7c5b7160a764e42f9fbe33ce57b3704821cff0d")
+	if err != nil {
+		fmt.Println("error decoding string")
+	}
+	if !ValidateED25519Signature(edPub, toSign, signature) {
 		fmt.Println("invalid signature")
+		//panic("invalid signature")
 	} else {
 		fmt.Println("signature is valid")
 	}
-	encrypted := aesCtr128Encrypt(sharedSecretSha512AesKey, sharedSecretSha512AesIV, data)
+	targetData, err := hex.DecodeString("3067a3ea868ade5c9fab43a8d5dc4d53ca1115dbf1c882888f877e85b65c3a82a61583f24c33bf0b9a6ec5c4ab2ecc555a939e7633557453854795e82f2d7ef6")
+	if err != nil {
+	}
+	_ = aesCtr128Encrypt(sharedSecretSha512AesKey, sharedSecretSha512AesIV, targetData)
+	encrypted := aesCtr128Encrypt(sharedSecretSha512AesKey, sharedSecretSha512AesIV, sign)
+	if hex.EncodeToString(encrypted) == "89dfefdc253147f32f5dc00e4a7042ebccdec663a422c80c1dd5ab69e9cc3304be2de1b0620cdef4749ccdffb4a8f4c4f704124e00f07b6efc3a722f173418a5" {
+		fmt.Println("encryped signature matches")
+	}
 	arr := append([]byte{0, 0, 0, 0}, encrypted...)
 	//fmt.Println(len(arr))
 	data1, err := a.post(socket, "/pair-verify", "application/octet-stream", arr)
