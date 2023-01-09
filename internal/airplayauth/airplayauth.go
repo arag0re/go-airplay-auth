@@ -25,7 +25,7 @@ import (
 	"unsafe"
 	_ "unsafe"
 
-	_ "github.com/brutella/hc/crypto"
+	curve "github.com/brutella/hc/crypto/curve25519"
 	"github.com/groob/plist"
 	"golang.org/x/crypto/curve25519"
 	"maze.io/x/crypto/x25519"
@@ -248,29 +248,29 @@ func randomString(length int) string {
 }
 
 func (a AirPlayAuth) Auth(socket net.Conn) (net.Conn, error) {
-	randomPrivateKey := make([]byte, 32)
-	_, err := rand.Read(randomPrivateKey)
-	if err != nil {
-		fmt.Println("Error generating random bytes:", err)
-		panic(err)
-	}
-	randomPublicKey := make([]byte, 32)
-	_, err1 := rand.Read(randomPublicKey)
-	if err1 != nil {
-		fmt.Println("Error generating random bytes:", err)
-		panic(err)
-	}
-	//priv := curve.GeneratePrivateKey()
-	//public := curve.PublicKey(priv)
+	//randomPrivateKey := make([]byte, 32)
+	//_, err := rand.Read(randomPrivateKey)
+	//if err != nil {
+	//	fmt.Println("Error generating random bytes:", err)
+	//	panic(err)
+	//}
+	//randomPublicKey := make([]byte, 32)
+	//_, err1 := rand.Read(randomPublicKey)
+	//if err1 != nil {
+	//	fmt.Println("Error generating random bytes:", err)
+	//	panic(err)
+	//}
+	priv := curve.GeneratePrivateKey()
+	public := curve.PublicKey(priv)
 	////randomPublic := *(*[32]byte)(unsafe.Pointer(&randomPublicKey[0]))
 	//randomPrivate := *(*[32]byte)(unsafe.Pointer(&randomPrivateKey[0]))
 	////secret := curve25519.SharedSecret(randomPrivate, randomPublic)
-	pairVerify1Response, err := a.doPairVerify1(socket, randomPublicKey)
+	pairVerify1Response, err := a.doPairVerify1(socket, public[:])
 	if err != nil {
 		fmt.Println("Error: ", err)
 		panic(err)
 	}
-	err = a.doPairVerify2(socket, pairVerify1Response, randomPrivateKey, randomPublicKey)
+	err = a.doPairVerify2(socket, pairVerify1Response, priv[:], public[:])
 	if err != nil {
 		fmt.Println("Error: ", err)
 		panic(err)
@@ -480,44 +480,12 @@ func (a AirPlayAuth) doPairVerify1(socket net.Conn, public []byte) ([]byte, erro
 }
 
 func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, private ed25519.PrivateKey, public ed25519.PublicKey) error {
-	targetPubKey, err := hex.DecodeString("d62c8c9548d836736978ad4d426df3495192407bbbb9466c9970794cdd2fe43a") //pairVerify1Response[:32] //:= make([]byte, len(pairVerify1Response[32:]))
-	if err != nil {
-		fmt.Println("error decoding string")
-	}
-	//targetData := pairVerify1Response[32:]
-	//if err != nil {
-	//	fmt.Println("error decoding string")
-	//}
-	//ourPub := authKey.Public().(ed25519.PublicKey)
-	//vPriv := *(*[32]byte)(unsafe.Pointer(&private[0]))
-	//vPub := *(*[32]byte)(unsafe.Pointer(&public[0]))
+	targetPubKey := pairVerify1Response[:32]
+	targetData := pairVerify1Response[32:]
 	targetPK := *(*[32]byte)(unsafe.Pointer(&targetPubKey[0]))
-	var secret string = "b7085ca45bd640d966525cbdbc0745bd1d80aa6e6ee48270b60affba3cccac31"
-	//sharedSecret, err := hex.DecodeString(secret) // SharedSecret(privateKey, targetPK)
-	//if err != nil {
-	//	fmt.Println("error decoding string")
-	//}
-	aPriv, err := hex.DecodeString("a18b940d3e1302e932a64defccf560a0714b3fa2683bbe3cea808b3abfa58b7d")
-	if err != nil {
-		fmt.Println("error decoding string")
-	}
-	vPub, err := hex.DecodeString("f5078944f29ec2bc3ffe5b04e17772b884ce6d1f88e255582e8b35dda8fa7f35")
-	if err != nil {
-		fmt.Println("error decoding string")
-	}
-	aPub, err := hex.DecodeString("0ceaa63dedd87d2da05ff0bdfbd99b5734911269c70664b9a74e04ae5cdbeca7")
-	if err != nil {
-		fmt.Println("error decoding string")
-	}
-	targetData, err := hex.DecodeString("3067a3ea868ade5c9fab43a8d5dc4d53ca1115dbf1c882888f877e85b65c3a82a61583f24c33bf0b9a6ec5c4ab2ecc555a939e7633557453854795e82f2d7ef6")
-	if err != nil {
-	}
-	//pub := authKey.Public().(ed25519.PublicKey)
-	privK := *(*[32]byte)(unsafe.Pointer(&aPriv[0]))
+	pub := authKey.Public().(ed25519.PublicKey)
+	privK := *(*[32]byte)(unsafe.Pointer(&private[0]))
 	sharedS := SharedSecret(privK, targetPK)
-	if hex.EncodeToString(sharedS[:]) == secret {
-		fmt.Println("shared Secret Matches")
-	}
 	h := sha512.New()
 	h.Write([]byte("Pair-Verify-AES-Key"))
 	h.Write(sharedS[:])
@@ -532,23 +500,9 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	if hex.EncodeToString(sharedSecretSha512AesKey) == "2556d9ef1780c8283eecf259fc7207af" {
 		fmt.Println("Key matches")
 	}
-	toSign := append(vPub, targetPubKey...)
-	prvK := ed25519.PrivateKey(append(aPriv, aPub...))
-	//signature, err := prvK.Sign(rand.Reader, toSign, crypto.Hash(0))
-	//if err != nil {
-	//	fmt.Println("error while signing")
-	//}
-	//priv := ed255.PrivateKey(prvK)
-	//signature := ed255.Sign(priv, toSign)
-	signature := ed25519.Sign(prvK, toSign)
-	if hex.EncodeToString(signature) == "82a0cf6cdba66df407fdeb51ac3884748e3a47c8de3f681d534299e707428ce19f6822d2bf925c5d197f1042e7c5b7160a764e42f9fbe33ce57b3704821cff0d" {
-		fmt.Println("Signature matches")
-	}
-	sign, err := hex.DecodeString("82a0cf6cdba66df407fdeb51ac3884748e3a47c8de3f681d534299e707428ce19f6822d2bf925c5d197f1042e7c5b7160a764e42f9fbe33ce57b3704821cff0d")
-	if err != nil {
-		fmt.Println("error decoding string")
-	}
-	if !ed25519.Verify(aPub, toSign, sign) {
+	toSign := append(public, targetPubKey...)
+	signature := ed25519.Sign(authKey, toSign)
+	if !ed25519.Verify(pub, toSign, signature) {
 		fmt.Println("invalid signature")
 		//panic("invalid signature")
 	} else {
@@ -561,12 +515,9 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	}
 	aesCtr := cipher.NewCTR(block, sharedSecretSha512AesIV)
 	ciph := make([]byte, len(targetData))
-	ciphertext := make([]byte, len(sign))
+	ciphertext := make([]byte, len(signature))
 	aesCtr.XORKeyStream(ciph, targetData)
-	aesCtr.XORKeyStream(ciphertext, sign)
-	if hex.EncodeToString(ciphertext) == "89dfefdc253147f32f5dc00e4a7042ebccdec663a422c80c1dd5ab69e9cc3304be2de1b0620cdef4749ccdffb4a8f4c4f704124e00f07b6efc3a722f173418a5" {
-		fmt.Println("encrytped signature matches")
-	}
+	aesCtr.XORKeyStream(ciphertext, signature)
 	arr := append([]byte{0, 0, 0, 0}, ciphertext...)
 	data1, err := a.post(socket, "/pair-verify", "application/octet-stream", arr)
 	if err != nil {
