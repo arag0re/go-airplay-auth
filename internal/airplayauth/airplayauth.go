@@ -3,7 +3,6 @@ package airplayauth
 import (
 	"bufio"
 	"bytes"
-	_ "crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
@@ -17,13 +16,11 @@ import (
 	"io"
 	"io/ioutil"
 	"main/internal/srp"
-	_ "math"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"unsafe"
-	_ "unsafe"
 
 	curve "github.com/brutella/hc/crypto/curve25519"
 	"github.com/groob/plist"
@@ -76,9 +73,6 @@ func (a AirPlayAuth) NewAirPlayAuth(address string, authToken string) error {
 		panic(err)
 	}
 	authKey = ed25519.PrivateKey(key)
-	//copy(authKey[:], authKeyBytes)
-	//fmt.Println("clientId:", clientId)
-	//fmt.Println("authKey:", authKeyBytes)
 	return nil
 }
 
@@ -136,7 +130,6 @@ func (a *AirPlayAuth) post(socket net.Conn, path string, contentType string, dat
 	}
 	resp, err := readResponse(socket)
 	if err != nil {
-		//log.Info.Panic(err)
 		panic(err)
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -145,7 +138,6 @@ func (a *AirPlayAuth) post(socket net.Conn, path string, contentType string, dat
 		defer resp.Body.Close()
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			//log.Info.Panic(err)
 			panic(err)
 		}
 		return body, nil
@@ -217,7 +209,7 @@ func readResponse(conn net.Conn) (*http.Response, error) {
 	}
 	resp := &http.Response{
 		Status:        strings.TrimSpace(statusLine),
-		StatusCode:    statusCode, // default to OK
+		StatusCode:    statusCode,
 		Header:        headers,
 		Body:          ioutil.NopCloser(bytes.NewReader(body)),
 		ContentLength: int64(len(body)),
@@ -248,23 +240,8 @@ func randomString(length int) string {
 }
 
 func (a AirPlayAuth) Auth(socket net.Conn) (net.Conn, error) {
-	//randomPrivateKey := make([]byte, 32)
-	//_, err := rand.Read(randomPrivateKey)
-	//if err != nil {
-	//	fmt.Println("Error generating random bytes:", err)
-	//	panic(err)
-	//}
-	//randomPublicKey := make([]byte, 32)
-	//_, err1 := rand.Read(randomPublicKey)
-	//if err1 != nil {
-	//	fmt.Println("Error generating random bytes:", err)
-	//	panic(err)
-	//}
 	priv := curve.GeneratePrivateKey()
 	public := curve.PublicKey(priv)
-	////randomPublic := *(*[32]byte)(unsafe.Pointer(&randomPublicKey[0]))
-	//randomPrivate := *(*[32]byte)(unsafe.Pointer(&randomPrivateKey[0]))
-	////secret := curve25519.SharedSecret(randomPrivate, randomPublic)
 	pairVerify1Response, err := a.doPairVerify1(socket, public[:])
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -275,7 +252,7 @@ func (a AirPlayAuth) Auth(socket net.Conn) (net.Conn, error) {
 		fmt.Println("Error: ", err)
 		panic(err)
 	}
-	println("Pair Verify finished!")
+	fmt.Println("Pair Verify finished!")
 	return socket, nil
 }
 
@@ -332,8 +309,6 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	proof := hex.EncodeToString(pairSetupPin2Response.Proof)
 	if !c.ServerOk(proof) {
 		panic("authentication failed")
-	} else {
-		fmt.Println("Proof matches")
 	}
 	_, err = a.doPairSetupPin3(socket, c.RawKey())
 	if err != nil {
@@ -373,7 +348,6 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (PairSetupPin1Response, er
 		panic(err)
 	}
 	pairSetupPin1Response, err := Parse(data)
-	//fmt.Println(hex.EncodeToString(pairSetupPin1Response["pk"].([]byte)))
 	if err != nil {
 		panic(err)
 	}
@@ -503,8 +477,7 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	toSign := append(public, targetPubKey...)
 	signature := ed25519.Sign(authKey, toSign)
 	if !ed25519.Verify(pub, toSign, signature) {
-		fmt.Println("invalid signature")
-		//panic("invalid signature")
+		panic("invalid signature")
 	} else {
 		fmt.Println("signature is valid")
 	}
@@ -519,11 +492,10 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	aesCtr.XORKeyStream(ciph, targetData)
 	aesCtr.XORKeyStream(ciphertext, signature)
 	arr := append([]byte{0, 0, 0, 0}, ciphertext...)
-	data1, err := a.post(socket, "/pair-verify", "application/octet-stream", arr)
+	_, err = a.post(socket, "/pair-verify", "application/octet-stream", arr)
 	if err != nil {
 		return err
 	}
-	print(data1)
 	return nil
 }
 
@@ -534,7 +506,6 @@ func (a AirPlayAuth) checkForFeatures(socket net.Conn, features []uint64) bool {
 	}
 	serverFeatures := serverInfo["features"].(uint64)
 	serverFeatures = uint64(serverFeatures)
-	//featuresToCheck := []int64{int64(math.Pow(2, 0)), int64(math.Pow(2, 7)), int64(math.Pow(2, 9))}
 	result := true
 	for _, bitmask := range features {
 		if serverFeatures&bitmask != bitmask {
@@ -553,6 +524,14 @@ func openTCPConnection(address string) (net.Conn, error) {
 	return conn, nil
 }
 
+func (a AirPlayAuth) SendVid(socket net.Conn) net.Conn {
+	content := "Content-Location: http://techslides.com/demos/sample-videos/small.mp4\r\n" +
+		"Start-Position: 0.0\r\n"
+	a.post(socket, "/play", "text/parameters", []byte(content))
+	return socket
+	//Thread.sleep(10000);
+}
+
 func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err error) {
 	p := Plist{
 		Dict: Dict{
@@ -560,12 +539,10 @@ func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err 
 			Array: []string{"txtAirPlay"},
 		},
 	}
-
 	output, err := plist.MarshalIndent(&p, "")
 	if err != nil {
 		panic(err)
 	}
-	//fmt.Println(Parse(output))
 	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", output)
 	if err != nil {
 		panic(err)
@@ -574,6 +551,5 @@ func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err 
 	if err != nil {
 		panic(err)
 	}
-	//fmt.Println(parsed)
 	return parsed, nil
 }

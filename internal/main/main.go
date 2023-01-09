@@ -29,6 +29,7 @@ func main() {
 		fmt.Println("Authentication failed: ", err)
 		panic(err)
 	}
+	socket = airplay.SendVid(socket)
 	//String content = "Content-Location: http://techslides.com/demos/sample-videos/small.mp4\r\n" +
 	//		"Start-Position: 0.0\r\n";
 	//post(socket, "/play", "text/parameters", content.getBytes("UTF-8"));
