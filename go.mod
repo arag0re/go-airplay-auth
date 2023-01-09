@@ -5,6 +5,7 @@ go 1.15
 require (
 	github.com/arag0re/go-apple-srp6 v0.0.0-20230106182410-d18dbb54e870
 	github.com/brutella/hc v1.2.5
+	github.com/cloudflare/circl v1.3.1
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/groob/plist v0.0.0-20220217120414-63fa881b19a5

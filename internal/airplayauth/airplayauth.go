@@ -3,7 +3,7 @@ package airplayauth
 import (
 	"bufio"
 	"bytes"
-	"crypto"
+	_ "crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
@@ -26,7 +26,6 @@ import (
 	_ "unsafe"
 
 	_ "github.com/brutella/hc/crypto"
-	_ "github.com/brutella/hc/crypto/curve25519"
 	"github.com/groob/plist"
 	"golang.org/x/crypto/curve25519"
 	"maze.io/x/crypto/x25519"
@@ -261,8 +260,9 @@ func (a AirPlayAuth) Auth(socket net.Conn) (net.Conn, error) {
 		fmt.Println("Error generating random bytes:", err)
 		panic(err)
 	}
-
-	//randomPublic := *(*[32]byte)(unsafe.Pointer(&randomPublicKey[0]))
+	//priv := curve.GeneratePrivateKey()
+	//public := curve.PublicKey(priv)
+	////randomPublic := *(*[32]byte)(unsafe.Pointer(&randomPublicKey[0]))
 	//randomPrivate := *(*[32]byte)(unsafe.Pointer(&randomPrivateKey[0]))
 	////secret := curve25519.SharedSecret(randomPrivate, randomPublic)
 	pairVerify1Response, err := a.doPairVerify1(socket, randomPublicKey)
@@ -533,12 +533,14 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 		fmt.Println("Key matches")
 	}
 	toSign := append(vPub, targetPubKey...)
-	prvK := ed25519.PrivateKey(aPriv)
-	signature, err := prvK.Sign(rand.Reader, toSign, crypto.Hash(0))
-	if err != nil {
-		fmt.Println("error while signing")
-	}
-	//signature := ed25519.Sign(aPriv, toSign)
+	prvK := ed25519.PrivateKey(append(aPriv, aPub...))
+	//signature, err := prvK.Sign(rand.Reader, toSign, crypto.Hash(0))
+	//if err != nil {
+	//	fmt.Println("error while signing")
+	//}
+	//priv := ed255.PrivateKey(prvK)
+	//signature := ed255.Sign(priv, toSign)
+	signature := ed25519.Sign(prvK, toSign)
 	if hex.EncodeToString(signature) == "82a0cf6cdba66df407fdeb51ac3884748e3a47c8de3f681d534299e707428ce19f6822d2bf925c5d197f1042e7c5b7160a764e42f9fbe33ce57b3704821cff0d" {
 		fmt.Println("Signature matches")
 	}
