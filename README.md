@@ -1,1 +1,1 @@
-# AirPlay 2 Auth Client written GO
+# Legacy AirplayAuth written GO
