@@ -168,6 +168,22 @@ func NewWithHash(h crypto.Hash, bits int) (*SRP, error) {
 	return s, nil
 }
 
+func NewWithPrimeField(h crypto.Hash, pf primeField) (*SRP, error) {
+	s := &SRP{
+		h:  h,
+		pf: &pf,
+	}
+	return s, nil
+}
+
+func NewPrimeFieldFromInts(g big.Int, N big.Int, n int) primeField {
+	return primeField{
+		g: &g,
+		N: &N,
+		n: n,
+	}
+}
+
 // ServerBegin processes the first message from an SRP client and returns a decoded
 // identity string and client public key. The caller is expected to use the identity
 // to lookup durable storage and find the corresponding encoded Verifier. This verifier
@@ -347,7 +363,7 @@ func (s *SRP) NewClient(I, p, a []byte) (*Client, error) {
 		s: s,
 		i: I,
 		p: p,
-		a: /*randBigInt(pf.n * 8)*/ big.NewInt(0).SetBytes(a),
+		a:/*randBigInt(pf.n * 8)*/ big.NewInt(0).SetBytes(a),
 		k: s.hashint(pad(pf.N, pf.n), pad(pf.g, pf.n)),
 	}
 

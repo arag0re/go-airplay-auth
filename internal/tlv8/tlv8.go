@@ -65,11 +65,11 @@ func Encode(items []TLV8Item, stream *[]byte) int {
 	return offset
 }
 
-//func (tlv []TLV8Item) ItemWithTag(tag TLV8Tag) *TLV8Item {
-//    for _, item := range tlv {
-//        if item.Tag == tag {
-//            return &item
-//        }
-//    }
-//    return nil
-//}
+func ItemWithTag(tag TLV8Tag, tlv8Array []TLV8Item) *TLV8Item {
+	for _, item := range tlv8Array {
+		if item.Tag == tag {
+			return &item
+		}
+	}
+	return nil
+}
