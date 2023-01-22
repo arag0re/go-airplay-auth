@@ -11,7 +11,6 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -37,32 +36,6 @@ const charset string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 type AirPlayAuth struct {
 }
 
-type PairSetupPin1Response struct {
-	Pk   []byte
-	Salt []byte
-}
-type PairSetupPin2Response struct {
-	Proof []byte
-}
-
-type PairSetupPin3Response struct {
-	Epk     []byte
-	AuthTag []byte
-}
-
-type PrivateKey struct {
-	PublicKey x25519.PublicKey
-	b         []byte
-}
-type Plist struct {
-	XMLName xml.Name `xml:"plist"`
-	Dict    Dict     `xml:"dict"`
-}
-type Dict struct {
-	Key   string   `xml:"key"`
-	Array []string `xml:"array>string"`
-}
-
 func (a AirPlayAuth) NewAirPlayAuth(address string, authToken string) error {
 	addr = address
 	//authToken := GenerateNewAuthToken()
@@ -76,25 +49,7 @@ func (a AirPlayAuth) NewAirPlayAuth(address string, authToken string) error {
 	return nil
 }
 
-func createPListStep1(data map[string]string) ([]byte, error) {
-	var b bytes.Buffer
-	enc := plist.NewEncoder(&b)
-	err := enc.Encode(data)
-	if err != nil {
-		panic(err)
-	}
-	return b.Bytes(), nil
-}
-
-func createPlist(m map[string][]byte) ([]byte, error) {
-	data, err := plist.MarshalIndent(m, "")
-	if err != nil {
-		panic(err)
-	}
-	return data, nil
-}
-
-func createPListStep2(data map[string][]byte) ([]byte, error) {
+func createPlist(data map[string]interface{}) ([]byte, error) {
 	var b bytes.Buffer
 	enc := plist.NewEncoder(&b)
 	err := enc.Encode(data)
@@ -336,7 +291,7 @@ func SharedSecret(privateKey, otherPublicKey [32]byte) [32]byte {
 }
 
 func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (PairSetupPin1Response, error) {
-	pairSetupPinRequestData, err := createPListStep1(map[string]string{
+	pairSetupPinRequestData, err := createPlist(map[string]interface{}{
 		"method": "pin",
 		"user":   clientId,
 	})
@@ -362,7 +317,7 @@ func (a AirPlayAuth) doPairSetupPin1(socket net.Conn) (PairSetupPin1Response, er
 }
 
 func (a AirPlayAuth) doPairSetupPin2(socket net.Conn, publicClientValueA []byte, clientEvidenceMessageM1 []byte) (PairSetupPin2Response, error) {
-	pairSetupPinRequestData, err := createPlist(map[string][]byte{
+	pairSetupPinRequestData, err := createPlist(map[string]interface{}{
 		"pk":    publicClientValueA,
 		"proof": clientEvidenceMessageM1,
 	})
@@ -412,10 +367,10 @@ func (a AirPlayAuth) doPairSetupPin3(socket net.Conn, sessionKeyHashK []byte) (P
 	}
 	pub := authKey.Public().(ed25519.PublicKey)
 	aesGcm128ClientLTPK := aesGcm.Seal(nil, aesIV, pub, nil)
-	requestData := make(map[string][]byte)
-	requestData["epk"] = aesGcm128ClientLTPK[:len(aesGcm128ClientLTPK)-16]
-	requestData["authTag"] = aesGcm128ClientLTPK[len(aesGcm128ClientLTPK)-16:]
-	pairSetupPinRequestData, err := createPListStep2(requestData)
+	pairSetupPinRequestData, err := createPlist(map[string]interface{}{
+		"epk":     aesGcm128ClientLTPK[:len(aesGcm128ClientLTPK)-16],
+		"authTag": aesGcm128ClientLTPK[len(aesGcm128ClientLTPK)-16:],
+	})
 	if err != nil {
 		panic(err)
 	}
