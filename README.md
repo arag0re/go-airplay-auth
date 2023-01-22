@@ -1,1 +1,1 @@
-# Legacy AirplayAuth written GO
+# AirplayAuth written GO
