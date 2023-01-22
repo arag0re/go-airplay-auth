@@ -225,10 +225,6 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	if err != nil {
 		panic(err)
 	}
-	//featuresToCheck := []uint64{uint64(math.Pow(2, 0)), uint64(math.Pow(2, 7)), uint64(math.Pow(2, 9)), uint64(math.Pow(2, 14)), uint64(math.Pow(2, 19)), uint64(math.Pow(2, 20)), uint64(math.Pow(2, 48))}
-	//check := a.checkForFeatures(socket, featuresToCheck)
-	//if check {
-	//fmt.Println("neccessary features are enabled on AirServer")
 	pairSetupPin1Response, err := a.doPairSetupPin1(socket)
 	if err != nil {
 		panic(err)
@@ -269,13 +265,7 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	if err != nil {
 		panic(err)
 	}
-	//fmt.Println(hex.EncodeToString(pairSetupPin3Response.AuthTag))
-	//fmt.Println(hex.EncodeToString(pairSetupPin3Response.Epk))
 	return socket, err
-	//} else {
-	//	fmt.Println("not all neccessary features are enabled on AirServer")
-	//	return nil, err
-	//}
 }
 
 func parsePublicKey(key []byte) (x25519.PublicKey, error) {
@@ -454,7 +444,38 @@ func (a AirPlayAuth) doPairVerify2(socket net.Conn, pairVerify1Response []byte, 
 	return nil
 }
 
-func (a AirPlayAuth) checkForFeatures(socket net.Conn, features []uint64) bool {
+func openTCPConnection(address string) (net.Conn, error) {
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		panic(err)
+	}
+	return conn, nil
+}
+
+func (a AirPlayAuth) SendVid(socket net.Conn) net.Conn {
+	content := "Content-Location: http://techslides.com/demos/sample-videos/small.mp4\r\n" +
+		"Start-Position: 0.0\r\n"
+	a.post(socket, "/play", "text/parameters", []byte(content))
+	return socket
+}
+
+func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err error) {
+	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", nil)
+	if err != nil {
+		panic(err)
+	}
+	parsed, err := Parse(serverInfo)
+	if err != nil {
+		panic(err)
+	}
+	return parsed, nil
+}
+
+func (a AirPlayAuth) checkForFeatures(features []uint64) bool {
+	socket, err := openTCPConnection(addr)
+	if err != nil {
+		panic(err)
+	}
 	serverInfo, err := a.getInfo(socket)
 	if err != nil {
 		panic(err)
@@ -469,42 +490,4 @@ func (a AirPlayAuth) checkForFeatures(socket net.Conn, features []uint64) bool {
 		}
 	}
 	return result
-}
-
-func openTCPConnection(address string) (net.Conn, error) {
-	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		panic(err)
-	}
-	return conn, nil
-}
-
-func (a AirPlayAuth) SendVid(socket net.Conn) net.Conn {
-	content := "Content-Location: http://techslides.com/demos/sample-videos/small.mp4\r\n" +
-		"Start-Position: 0.0\r\n"
-	a.post(socket, "/play", "text/parameters", []byte(content))
-	return socket
-	//Thread.sleep(10000);
-}
-
-func (a AirPlayAuth) getInfo(socket net.Conn) (info map[string]interface{}, err error) {
-	p := Plist{
-		Dict: Dict{
-			Key:   "qualifier",
-			Array: []string{"txtAirPlay"},
-		},
-	}
-	output, err := plist.MarshalIndent(&p, "")
-	if err != nil {
-		panic(err)
-	}
-	serverInfo, err := a.post(socket, "/info", "application/x-apple-binary-plist", output)
-	if err != nil {
-		panic(err)
-	}
-	parsed, err := Parse(serverInfo)
-	if err != nil {
-		panic(err)
-	}
-	return parsed, nil
 }
