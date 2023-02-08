@@ -16,18 +16,18 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math/big"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"unsafe"
 
-	"main/internal/srp"
+	_ "main/internal/srp"
 	tlv8 "main/internal/tlv8"
 
 	curve "github.com/brutella/hc/crypto/curve25519"
 	"github.com/groob/plist"
+	"github.com/opencoff/go-srp"
 	_ "github.com/pion/rtp"
 	"golang.org/x/crypto/curve25519"
 	"maze.io/x/crypto/x25519"
@@ -37,7 +37,8 @@ var clientId = ""
 var authKey ed25519.PrivateKey
 var addr string
 var serverInfo map[string]interface{}
-var customSrp srp.SRP
+var customSrp *srp.SRP
+var user *srp.Client
 
 const charset string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -233,6 +234,8 @@ func (a AirPlayAuth) Pair(pin string) (net.Conn, error) {
 	if err != nil {
 		panic(err)
 	}
+	customSrp, err = srp.NewWithHash(crypto.SHA512, 3072)
+	user, err = customSrp.NewClient([]byte("Pair-Setup"), []byte(pin))
 	resp, err := a.doPairSetup1(socket)
 	if err != nil {
 		panic(err)
@@ -321,11 +324,6 @@ func (a AirPlayAuth) doPairSetup1(socket net.Conn) ([]byte, error) {
 	if socket == nil {
 		panic("socket can't be null!")
 	}
-
-	pf := srp.NewPrimeFieldFromInts(*big.NewInt(0), *big.NewInt(0), 1)
-	srp, err := srp.NewWithPrimeField(crypto.SHA512, pf)
-	srp.NewClient(nil, nil, nil)
-
 	stateBytes := []byte{uint8(PairingStateM1)}
 	pairingMethodBytes := []byte{uint8(PairingMethodPairSetup)}
 	stateItem := tlv8.NewTLV8Item(tlv8.TLV8TagState, stateBytes)
@@ -341,7 +339,7 @@ func (a AirPlayAuth) doPairSetup1(socket net.Conn) ([]byte, error) {
 	return data, nil
 }
 
-func (a AirPlayAuth) doPairSetup2(socket net.Conn, items []tlv8.TLV8Item) {
+func (a AirPlayAuth) doPairSetup2(socket net.Conn, items []tlv8.TLV8Item) ([]byte, error) {
 	if items == nil {
 		panic("no tlv8 items supplied!")
 	}
@@ -350,6 +348,35 @@ func (a AirPlayAuth) doPairSetup2(socket net.Conn, items []tlv8.TLV8Item) {
 	if pk == nil || salt == nil {
 		panic("pk, salt or both those values are missing!")
 	}
+	cred := user.Credentials()
+	splittedCreds := strings.Split(cred, ":")
+	xA := splittedCreds[1]
+	server_creds := hex.EncodeToString(salt) + ":" + hex.EncodeToString(pk)
+	m1, err := user.Generate(server_creds)
+	if err != nil {
+		panic(err)
+	}
+	xABytes, err := hex.DecodeString(xA)
+	if err != nil {
+		panic(err)
+	}
+	m1Bytes, err := hex.DecodeString(m1)
+	if err != nil {
+		panic(err)
+	}
+	stateBytes := []byte{uint8(PairingStateM3)}
+	stateItem := tlv8.NewTLV8Item(tlv8.TLV8TagState, stateBytes)
+	pkItem := tlv8.NewTLV8Item(tlv8.TLV8TagPublicKey, xABytes)
+	proofItem := tlv8.NewTLV8Item(tlv8.TLV8TagPublicKey, m1Bytes)
+	tlvItems := []tlv8.TLV8Item{stateItem, pkItem, proofItem}
+	var encodedTlv []byte
+	tlv8.Encode(tlvItems, &encodedTlv)
+	requestData := bytes.NewBuffer(encodedTlv)
+	data, err := a.post(socket, "/pair-setup", "application/octet-stream", requestData.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func continuePairSetupWithData(responseData []byte) {
